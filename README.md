@@ -110,6 +110,8 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 | `--device paperwhite` | preset de `--max-width` por leitor (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
 | `--grayscale` | tons de cinza — menor e nativo do e-ink |
 | `--gamma 1.8` | escurece os meios-tons pro e-ink (mais contraste; `1.0` = off) |
+| `--format epub` | gera um `.epub` (uma imagem por página, ordem RTL) — pra leitores que não abrem cbz nem pdf |
+| `--upscale` | também **amplia** imagens até `--max-width` (default só encolhe) |
 | `--page before\|after\|off` | onde entra a página inteira (macro) — default `before` |
 | `--split-ratio 1.0` | corta painel mais largo que N:1 em fatias verticais (direita→esquerda); o painel inteiro sai antes das fatias |
 | `--keep-first N` | mantém as N primeiras páginas inteiras (capa/miolo) |
@@ -121,7 +123,9 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 ## Saída: formato e tamanho
 
 Default: um **CBZ** (zip de imagens) em **JPEG q90** (~1x o tamanho da fonte).
-`--format png` é sem perda mas ~3x maior; ajuste com `--quality 1..95`.
+`--format png` é sem perda mas ~3x maior; ajuste com `--quality 1..95`. Pra
+leitores que não abrem cbz, `--format pdf` (Kindle) ou `--format epub` (Xteink
+X4 e outros) — cada um coberto numa seção abaixo.
 
 Pro **Kindle** (e outros leitores que só abrem PDF), use **`--format pdf`**: gera
 um `.pdf` com um painel por página, com o JPEG embutido sem re-comprimir (mesmo
@@ -165,6 +169,37 @@ aparelho:
 Valores aproximados (variam por modelo/ano). Na dúvida, `1264` cobre bem a maioria
 dos leitores de 6–7". Em vez de decorar o número, use o preset: `--device paperwhite`
 (= `--max-width 1264`), `--device scribe`, etc.
+
+### Xteink X4 (e outros leitores que só abrem EPUB)
+
+O X4 (4.3", 800×480) **não lê CBZ nem PDF** — o firmware CrossPoint aceita
+`.epub`, `.txt` e `.bmp`. Converter no Calibre estraga os painéis: o "comic input"
+dele redimensiona pro perfil de saída e assa o padding dentro da imagem. Por isso
+`--format epub` gera o arquivo aqui, sem intermediário.
+
+Duas particularidades do aparelho, ambas lidas do fonte do firmware:
+
+- **Ele nunca amplia** (`if (scale > 1.0f) scale = 1.0f`). Um painel de 780px
+  encolhe pra 480 e enche a tela, mas uma fatia de `--split-ratio` (~390px) ficaria
+  pequena com sobra branca dos lados. Daí o `--upscale`.
+- **A tela tem 4 níveis de cinza** (cache interno de 2 bits/pixel). Medindo em
+  páginas reais, `-q 80` gera arquivos 27% menores que `q 90` e só 1.1% dos pixels
+  caem num nível diferente — invisível, e é menos byte pra empurrar via WiFi pro
+  ESP32 do aparelho.
+
+```bash
+manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 80 --split-ratio 1.0
+```
+
+`--upscale` tem um custo que vale saber antes de esperar a transferência: painéis
+estreitos são reamostrados pra largura cheia da tela, o que engorda o JPEG. Medido
+num volume real (FMA vol. 01, 2172 imagens de saída): 62 MB sem `--upscale` contra
+114 MB com — quase o dobro, bem mais que os 27% que o `-q 80` economiza acima. É o
+preço de não deixar as fatias renderizarem como selo postal na tela. Se o tempo de
+transferência pelo WiFi do X4 doer mais que os painéis pequenos, a alavanca é
+baixar o `-q` ainda mais, ou simplesmente deixar `--upscale` de fora.
+
+`--split-ratio 0` desliga o corte de painel largo, se quiser comparar.
 
 Em telas pequenas (o X4 tem 480px de largura e proporção 0.6) um painel deitado
 vira uma faixa ilegível. `--split-ratio 1.0` corta todo painel landscape em

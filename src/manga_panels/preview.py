@@ -40,7 +40,7 @@ def annotate_page(page: Image.Image, boxes: list[Box]) -> Image.Image:
 
 
 def preview_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
-                    max_width: int | None = None,
+                    max_width: int | None = None, upscale: bool = False,
                     on_page: Callable[[int, int], None] | None = None) -> int:
     det = MagiDetector()
     pages = unpack(in_path)
@@ -50,5 +50,5 @@ def preview_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
         out.append(annotate_page(p, det.detect(p)))
         if on_page is not None:
             on_page(i + 1, total)
-    pack(out, out_path, fmt=fmt, quality=quality, max_width=max_width)
+    pack(out, out_path, fmt=fmt, quality=quality, max_width=max_width, upscale=upscale)
     return len(out)

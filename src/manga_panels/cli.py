@@ -46,8 +46,9 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="folder to browse and pick from when no input is given")
 
     g_out = ap.add_argument_group("output")
-    g_out.add_argument("-f", "--format", default="jpeg", choices=["jpeg", "png", "pdf"],
-                       help="output: jpeg/png inside a cbz, or pdf (default jpeg)")
+    g_out.add_argument("-f", "--format", default="jpeg",
+                       choices=["jpeg", "png", "pdf", "epub"],
+                       help="output: jpeg/png inside a cbz, or pdf/epub (default jpeg)")
     g_out.add_argument("-q", "--quality", type=int, default=90,
                        help="jpeg quality 1-95 (default 90)")
     g_out.add_argument("-w", "--max-width", type=int, default=None,
@@ -58,6 +59,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="convert panels to grayscale (smaller, native to e-ink)")
     g_out.add_argument("--gamma", type=float, default=1.0,
                        help="darken midtones for e-ink (>1, e.g. 1.8; 1.0 = off)")
+    g_out.add_argument("--upscale", action="store_true",
+                       help="grow images up to --max-width too (default: only shrink; "
+                            "needed on readers that never scale up, like the Xteink X4)")
     g_out.add_argument("--preview", action="store_true",
                        help="write <stem>_preview.cbz with the panels drawn, without cropping")
     g_out.add_argument("--debug", action="store_true",
@@ -80,7 +84,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="which side of page 1 the front cover is on (default left)")
     g_lay.add_argument("--split-ratio", type=float, default=None,
                        help="cut panels wider than N:1 into vertical slices, read "
-                            "right to left (try 1.0 on a small screen; off by default)")
+                            "right to left (try 1.0 on a small screen; "
+                            "0 = never split; off by default)")
     return ap
 
 
@@ -140,8 +145,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # --max-width wins; else fall back to the --device preset
     max_width = args.max_width if args.max_width is not None else _DEVICES.get(args.device)
-    common = dict(fmt=args.format, quality=args.quality, max_width=max_width)
-    ext = "pdf" if args.format == "pdf" else "cbz"
+    # upscale lives in `common` (not just the process_archive branch) because all
+    # three archive functions call pack(); a one-sided param would make
+    # `--preview --upscale` a TypeError.
+    common = dict(fmt=args.format, quality=args.quality, max_width=max_width,
+                  upscale=args.upscale)
+    ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
     if args.debug:
         run, kw, suffix = debug_archive, common, f"_debug.{ext}"
     elif args.preview:
@@ -184,8 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]error:[/] cover not found: {escape(args.cover)}")
         return 1
 
-    if args.split_ratio is not None and not (args.split_ratio > 0):   # rejects NaN too
-        console.print("[red]error:[/] --split-ratio must be > 0")
+    # 0 is the "off" sentinel (process_archive skips splitting on a falsy value), so
+    # a device preset that enables splitting stays switchable from the command line.
+    if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
+        console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
         return 1
 
     if args.format == "pdf":                    # fail fast, before loading the model

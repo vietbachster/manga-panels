@@ -445,13 +445,6 @@ def test_cli_device_x4_and_split_ratio(tmp_path, monkeypatch):
     assert captured["max_width"] == 480 and captured["split_ratio"] == 1.0
 
 
-def test_cli_rejects_non_positive_split_ratio(tmp_path):
-    from manga_panels.cli import main
-    src = tmp_path / "ch.cbz"
-    pack([_grid_page()], src)
-    assert main([str(src), "--split-ratio", "0"]) == 1
-
-
 def test_cli_rejects_nan_split_ratio(tmp_path):
     # nan <= 0 is False, so a naive guard lets it through; catch it here instead
     # of letting it fail late (after Magi loads) with an opaque ValueError.
@@ -516,3 +509,60 @@ def test_cli_config_defaults_applied_and_cli_wins(tmp_path):
     assert main([str(src), "-o", str(out2), "--config", str(cfg), "-f", "jpeg"]) == 0
     with zipfile.ZipFile(out2) as z:
         assert z.namelist()[0].endswith(".jpg")
+
+
+def test_cli_format_epub_writes_epub(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--format", "epub"]) == 0
+    out = tmp_path / "ch_panels.epub"
+    assert out.exists()
+    with zipfile.ZipFile(out) as z:
+        assert z.infolist()[0].filename == "mimetype"
+    assert not (tmp_path / "ch_panels.cbz").exists()
+
+
+def test_cli_upscale_reaches_process_archive(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out, fmt=kw.get("fmt", "jpeg"))
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--device", "x4", "--upscale"]) == 0
+    assert captured["upscale"] is True and captured["max_width"] == 480
+
+
+def test_cli_preview_accepts_upscale(tmp_path):
+    # --preview routes to a different function; upscale must not leak as a TypeError
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--preview", "--upscale", "--max-width", "300"]) == 0
+    assert (tmp_path / "ch_preview.cbz").exists()
+
+
+def test_cli_split_ratio_zero_means_no_split(tmp_path):
+    # 0 is the "off" sentinel, so a device preset that turns splitting on can be
+    # turned back off from the command line
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "0", "-o", str(tmp_path / "zero.cbz")]) == 0
+    assert main([str(src), "-o", str(tmp_path / "none.cbz")]) == 0
+    assert len(unpack(tmp_path / "zero.cbz")) == len(unpack(tmp_path / "none.cbz"))
+
+
+def test_cli_still_rejects_negative_and_nan_split_ratio(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "-1"]) == 1
+    assert main([str(src), "--split-ratio", "nan"]) == 1
