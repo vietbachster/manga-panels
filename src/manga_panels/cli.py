@@ -46,8 +46,9 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="folder to browse and pick from when no input is given")
 
     g_out = ap.add_argument_group("output")
-    g_out.add_argument("-f", "--format", default="jpeg", choices=["jpeg", "png", "pdf"],
-                       help="output: jpeg/png inside a cbz, or pdf (default jpeg)")
+    g_out.add_argument("-f", "--format", default="jpeg",
+                       choices=["jpeg", "png", "pdf", "epub"],
+                       help="output: jpeg/png inside a cbz, or pdf/epub (default jpeg)")
     g_out.add_argument("-q", "--quality", type=int, default=90,
                        help="jpeg quality 1-95 (default 90)")
     g_out.add_argument("-w", "--max-width", type=int, default=None,
@@ -58,6 +59,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="convert panels to grayscale (smaller, native to e-ink)")
     g_out.add_argument("--gamma", type=float, default=1.0,
                        help="darken midtones for e-ink (>1, e.g. 1.8; 1.0 = off)")
+    g_out.add_argument("--upscale", action="store_true",
+                       help="grow images up to --max-width too (default: only shrink; "
+                            "needed on readers that never scale up, like the Xteink X4)")
     g_out.add_argument("--preview", action="store_true",
                        help="write <stem>_preview.cbz with the panels drawn, without cropping")
     g_out.add_argument("--debug", action="store_true",
@@ -140,8 +144,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # --max-width wins; else fall back to the --device preset
     max_width = args.max_width if args.max_width is not None else _DEVICES.get(args.device)
-    common = dict(fmt=args.format, quality=args.quality, max_width=max_width)
-    ext = "pdf" if args.format == "pdf" else "cbz"
+    # upscale lives in `common` (not just the process_archive branch) because all
+    # three archive functions call pack(); a one-sided param would make
+    # `--preview --upscale` a TypeError.
+    common = dict(fmt=args.format, quality=args.quality, max_width=max_width,
+                  upscale=args.upscale)
+    ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
     if args.debug:
         run, kw, suffix = debug_archive, common, f"_debug.{ext}"
     elif args.preview:
