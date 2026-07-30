@@ -14,7 +14,8 @@ def crop_panels(page: Image.Image, boxes: list[Box]) -> list[Image.Image]:
     return [page.crop((x, y, x + w, y + h)) for (x, y, w, h) in boxes]
 
 
-def _panel_imgs(page: Image.Image, box: Box, obstacles, split_ratio: float | None):
+def _panel_imgs(page: Image.Image, box: Box, obstacles: list[list[float]],
+                split_ratio: float | None) -> list[Image.Image]:
     """The panel crop — or, when it is too wide to read, the whole panel
     followed by its right-to-left slices. The whole panel is what gives the
     slices their context, which is why there is no overlap between them."""

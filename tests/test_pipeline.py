@@ -47,6 +47,34 @@ def test_include_page_not_duplicated_when_whole_page(tmp_path):
     assert process_archive(src, out) == 1         # 0 panels -> page once
 
 
+def _gradient_page(w=64, h=48):
+    # every pixel a distinct color (no row/column repeats), so an exact pixel
+    # comparison catches a crop/shift/flip regression; luma stays >=128
+    # everywhere so the fake detector finds zero dark blobs (0 panels).
+    ys, xs = np.mgrid[0:h, 0:w]
+    r = 150 + (xs * 3) % 100
+    g = 150 + (ys * 5) % 100
+    b = 150 + ((xs + ys) * 2) % 100
+    arr = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+
+def test_zero_panel_page_pixel_identical_when_split_off(tmp_path):
+    # regression: the <=1 panel branch now crops a synthetic full-page box
+    # through _panel_imgs instead of appending `page` directly. With
+    # split_ratio=None the two must be pixel-for-pixel identical.
+    page = _gradient_page()
+    src = tmp_path / "grad.cbz"
+    pack([page], src, fmt="png")                  # lossless round-trip
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, fmt="png", split_ratio=None)
+    assert n == 1                                 # 0 panels -> page once
+    [got] = unpack(out)
+    assert got.size == page.size
+    assert got.mode == page.mode
+    assert np.array_equal(np.asarray(got), np.asarray(page))
+
+
 def _single_panel_page():
     # white page with ONE black rectangle and no internal gutter -> 1 panel
     arr = np.full((200, 200), 255, np.uint8)
@@ -59,6 +87,21 @@ def test_single_panel_page_emitted_once(tmp_path):
     pack([_single_panel_page()], src)
     out = tmp_path / "out.cbz"
     assert process_archive(src, out) == 1         # 1 panel ~ page -> no duplicate
+
+
+def test_single_panel_page_pixel_identical_when_split_off(tmp_path):
+    # same regression guard as test_zero_panel_page_pixel_identical_when_split_off,
+    # for the other shape of the <=1 panel branch (exactly 1 detected panel).
+    page = _single_panel_page()
+    src = tmp_path / "sp.cbz"
+    pack([page], src, fmt="png")                  # lossless round-trip
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, fmt="png", split_ratio=None)
+    assert n == 1                                 # 1 panel ~ page -> no duplicate
+    [got] = unpack(out)
+    assert got.size == page.size
+    assert got.mode == page.mode
+    assert np.array_equal(np.asarray(got), np.asarray(page))
 
 
 def _wide_panels_page():
