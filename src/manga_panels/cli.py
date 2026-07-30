@@ -20,6 +20,7 @@ from manga_panels.preview import preview_archive
 _EXTS = {".cbz", ".cbr", ".zip", ".rar"}
 # screen-width presets for --device (a shortcut for --max-width)
 _DEVICES = {
+    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --split-ratio
     "basic": 1072,       # Kindle basic / Kobo Clara / Boox Poke (6")
     "pw11": 1236,        # Kindle Paperwhite 11th gen (6.8")
     "paperwhite": 1264,  # Paperwhite 12th / Oasis / Kobo Libra / Boox Page (7")
@@ -77,6 +78,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="make the cover from a fraction (0-1) of a wide first page (wraparound)")
     g_lay.add_argument("--cover-side", choices=["left", "right"], default="left",
                        help="which side of page 1 the front cover is on (default left)")
+    g_lay.add_argument("--split-ratio", type=float, default=None,
+                       help="cut panels wider than N:1 into vertical slices, read "
+                            "right to left (try 1.0 on a small screen; off by default)")
     return ap
 
 
@@ -146,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
         run = process_archive
         kw = {**common, "page_pos": args.page, "keep_first": args.keep_first,
               "grayscale": args.grayscale, "gamma": args.gamma, "cover": args.cover,
-              "cover_crop": args.cover_crop, "cover_side": args.cover_side}
+              "cover_crop": args.cover_crop, "cover_side": args.cover_side,
+              "split_ratio": args.split_ratio}
         suffix = f"{args.suffix}.{ext}"
 
     if args.input is None:
@@ -177,6 +182,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cover and not Path(args.cover).exists():   # fail fast on a bad cover path
         console.print(f"[red]error:[/] cover not found: {escape(args.cover)}")
+        return 1
+
+    if args.split_ratio is not None and args.split_ratio <= 0:
+        console.print("[red]error:[/] --split-ratio must be > 0")
         return 1
 
     if args.format == "pdf":                    # fail fast, before loading the model

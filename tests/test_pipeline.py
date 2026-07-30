@@ -405,6 +405,30 @@ def test_cli_device_resolves_max_width(tmp_path, monkeypatch):
     assert captured["max_width"] == 1860 and captured["grayscale"] is True
 
 
+def test_cli_device_x4_and_split_ratio(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out, fmt=kw.get("fmt", "jpeg"))
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--device", "x4", "--split-ratio", "1.0"]) == 0
+    assert captured["max_width"] == 480 and captured["split_ratio"] == 1.0
+
+
+def test_cli_rejects_non_positive_split_ratio(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "0"]) == 1
+
+
 def test_cli_format_pdf_writes_pdf(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
