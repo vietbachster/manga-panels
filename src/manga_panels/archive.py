@@ -219,27 +219,28 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                      f'media-type="application/xhtml+xml"/>')
         spine.append(f'    <itemref idref="p{i:04d}"/>')
 
-    opf = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
+    opf = "\n".join([
+        '<?xml version="1.0" encoding="UTF-8"?>',
         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
-        'unique-identifier="bookid">\n'
-        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
-        f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>\n'
-        f'    <dc:title>{title}</dc:title>\n'
-        '    <dc:language>en</dc:language>\n'
-        f'    <meta property="dcterms:modified">{modified}</meta>\n'
-        '  </metadata>\n'
-        '  <manifest>\n'
+        'unique-identifier="bookid">',
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
+        f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>',
+        f'    <dc:title>{title}</dc:title>',
+        '    <dc:language>en</dc:language>',
+        f'    <meta property="dcterms:modified">{modified}</meta>',
+        '  </metadata>',
+        '  <manifest>',
         '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
-        'properties="nav"/>\n'
-        '    <item id="css" href="style.css" media-type="text/css"/>\n'
-        + "\n".join(items) + "\n"
-        '  </manifest>\n'
-        '  <spine page-progression-direction="rtl">\n'   # manga reads right to left
-        + "\n".join(spine) + "\n"
-        '  </spine>\n'
-        '</package>\n'
-    )
+        'properties="nav"/>',
+        '    <item id="css" href="style.css" media-type="text/css"/>',
+        *items,
+        '  </manifest>',
+        '  <spine page-progression-direction="rtl">',   # manga reads right to left
+        *spine,
+        '  </spine>',
+        '</package>',
+        '',
+    ])
 
     nav = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
