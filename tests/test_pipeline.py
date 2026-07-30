@@ -104,6 +104,29 @@ def test_single_panel_page_pixel_identical_when_split_off(tmp_path):
     assert np.array_equal(np.asarray(got), np.asarray(page))
 
 
+def test_zero_panel_page_appended_by_identity_not_copy(tmp_path, monkeypatch):
+    # Pixel-equality can't catch a regression here: cropping a page to its own
+    # full bounding box is pixel-identical to the page whether or not that
+    # crop is a fresh copy. Object identity is what tells "appended `page`"
+    # apart from "appended a crop of it" -- and the no-copy path exists
+    # specifically to avoid doubling peak RAM on <=1-panel pages (measured
+    # 628MB -> 1176MB on a 40-page archive when this regressed).
+    import manga_panels.pipeline as pipeline
+
+    page = Image.new("RGB", (10, 10), (255, 255, 255))   # blank -> 0 panels
+    captured = {}
+
+    def _fake_pack(imgs, out, **kw):
+        captured["imgs"] = imgs
+
+    monkeypatch.setattr(pipeline, "unpack", lambda path: [page])
+    monkeypatch.setattr(pipeline, "pack", _fake_pack)
+
+    process_archive(tmp_path / "in.cbz", tmp_path / "out.cbz", split_ratio=None)
+
+    assert captured["imgs"][0] is page             # same object, no full-page copy
+
+
 def _wide_panels_page():
     # two wide panels stacked -> 2 boxes of 360x100 each (ratio 3.6)
     arr = np.full((400, 400), 255, np.uint8)
