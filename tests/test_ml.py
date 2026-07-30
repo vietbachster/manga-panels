@@ -77,3 +77,20 @@ def test_magi_detect_returns_boxes_real():
     assert isinstance(boxes, list)
     for b in boxes:
         assert len(b) == 4 and b[2] > 0 and b[3] > 0
+
+
+def test_detect_split_returns_panels_and_obstacles(monkeypatch):
+    raw = {"panels": [[0, 0, 100, 100]], "texts": [[10, 10, 30, 30]],
+           "characters": [[50, 50, 90, 90]], "is_essential_text": [True]}
+    monkeypatch.setattr(ml.MagiDetector, "detect_raw", lambda self, page: raw)
+    boxes, obstacles = ml.MagiDetector().detect_split(Image.new("RGB", (200, 200)))
+    assert boxes == [(0, 0, 100, 100)]
+    # texts first, then characters — both normalised to xyxy floats
+    assert obstacles == [[10.0, 10.0, 30.0, 30.0], [50.0, 50.0, 90.0, 90.0]]
+
+
+def test_detect_delegates_to_detect_split(monkeypatch):
+    raw = {"panels": [[0, 0, 100, 100]], "texts": [], "characters": [],
+           "is_essential_text": []}
+    monkeypatch.setattr(ml.MagiDetector, "detect_raw", lambda self, page: raw)
+    assert ml.MagiDetector().detect(Image.new("RGB", (200, 200))) == [(0, 0, 100, 100)]
