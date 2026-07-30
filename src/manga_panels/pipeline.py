@@ -58,8 +58,15 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
         else:
             boxes, obstacles = det.detect_split(page)   # already in reading order
             if len(boxes) <= 1:                    # cover/splash/spread -> once
-                whole = (0, 0, page.width, page.height)
-                out_imgs.extend(_panel_imgs(page, whole, obstacles, split_ratio))
+                if not split_ratio:
+                    # no splitting -> keep the same object, no full-page copy.
+                    # This is the default path; routing it through _panel_imgs
+                    # (crop_panels on a synthetic full-page box) would double
+                    # peak RAM on volumes with many <=1-panel pages.
+                    out_imgs.append(page)
+                else:
+                    whole = (0, 0, page.width, page.height)
+                    out_imgs.extend(_panel_imgs(page, whole, obstacles, split_ratio))
             else:
                 if page_pos == "before":
                     out_imgs.append(page)
