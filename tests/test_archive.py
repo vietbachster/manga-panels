@@ -1,3 +1,5 @@
+import io
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from PIL import Image
@@ -213,3 +215,85 @@ def test_pack_threads_upscale_to_the_images(tmp_path):
     out = tmp_path / "up.cbz"
     pack([Image.new("RGB", (40, 20))], out, fmt="png", max_width=100, upscale=True)
     assert unpack(out)[0].size == (100, 50)
+
+
+_OPF = {"opf": "http://www.idpf.org/2007/opf"}
+_DC = "{http://purl.org/dc/elements/1.1/}"
+
+
+def _epub(tmp_path, n=3, **kw):
+    out = tmp_path / "vol.epub"
+    pack([Image.new("RGB", (40, 20)) for _ in range(n)], out, fmt="epub", **kw)
+    return out
+
+
+def test_epub_mimetype_is_first_and_stored(tmp_path):
+    # the EPUB spec requires this exact first entry, uncompressed
+    with zipfile.ZipFile(_epub(tmp_path)) as z:
+        first = z.infolist()[0]
+        assert first.filename == "mimetype"
+        assert first.compress_type == zipfile.ZIP_STORED
+        assert z.read("mimetype") == b"application/epub+zip"
+
+
+def test_epub_container_points_at_an_existing_opf(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path)) as z:
+        root = ET.fromstring(z.read("META-INF/container.xml"))
+        ns = {"c": "urn:oasis:names:tc:opendocument:xmlns:container"}
+        assert root.find(".//c:rootfile", ns).get("full-path") in z.namelist()
+
+
+def test_epub_spine_lists_every_page_in_order(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path, n=3)) as z:
+        root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["p0001", "p0002", "p0003"]
+
+
+def test_epub_spine_is_right_to_left(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path)) as z:
+        root = ET.fromstring(z.read("OEBPS/content.opf"))
+    assert root.find(".//opf:spine", _OPF).get("page-progression-direction") == "rtl"
+
+
+def test_epub_first_image_is_the_cover(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path, n=3)) as z:
+        root = ET.fromstring(z.read("OEBPS/content.opf"))
+    covers = [e.get("href") for e in root.findall(".//opf:manifest/opf:item", _OPF)
+              if e.get("properties") == "cover-image"]
+    assert covers == ["img/0001.jpg"]
+
+
+def test_epub_every_page_references_an_image_that_exists(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path, n=3)) as z:
+        names = set(z.namelist())
+        for i in (1, 2, 3):
+            assert f'src="img/{i:04d}.jpg"' in z.read(f"OEBPS/p{i:04d}.xhtml").decode()
+            assert f"OEBPS/img/{i:04d}.jpg" in names
+
+
+def test_epub_title_with_an_ampersand_stays_valid_xml(tmp_path):
+    out = tmp_path / "Tom & Jerry.epub"
+    pack([Image.new("RGB", (10, 10))], out, fmt="epub")
+    with zipfile.ZipFile(out) as z:
+        root = ET.fromstring(z.read("OEBPS/content.opf"))   # raises if malformed
+    assert root.find(f".//{_DC}title").text == "Tom & Jerry"
+
+
+def test_epub_identifier_is_stable_across_runs(tmp_path):
+    # a re-processed volume must keep its id, or the reader loses reading progress
+    ids = []
+    for run in ("a", "b"):
+        out = tmp_path / run / "vol.epub"
+        pack([Image.new("RGB", (10, 10))], out, fmt="epub")
+        with zipfile.ZipFile(out) as z:
+            root = ET.fromstring(z.read("OEBPS/content.opf"))
+        ids.append(root.find(f".//{_DC}identifier").text)
+    assert ids[0] == ids[1] and ids[0].startswith("urn:uuid:")
+
+
+def test_epub_applies_max_width_and_upscale(tmp_path):
+    out = tmp_path / "vol.epub"
+    pack([Image.new("RGB", (40, 20))], out, fmt="epub", max_width=100, upscale=True)
+    with zipfile.ZipFile(out) as z:
+        assert Image.open(io.BytesIO(z.read("OEBPS/img/0001.jpg"))).size == (100, 50)

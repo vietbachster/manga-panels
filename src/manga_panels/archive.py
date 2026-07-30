@@ -3,10 +3,13 @@ from __future__ import annotations
 import io
 import os
 import re
+import uuid
 import zipfile
 import zlib
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from PIL import Image, UnidentifiedImageError
 
@@ -132,6 +135,10 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
         _pack_pdf(images, out_path, quality=quality, max_width=max_width,
                   grayscale=grayscale, gamma=gamma, upscale=upscale)
         return
+    if fmt == "epub":                             # one image per page, for epub-only readers
+        _pack_epub(images, out_path, quality=quality, max_width=max_width,
+                   grayscale=grayscale, gamma=gamma, upscale=upscale)
+        return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
         ext, pil_fmt, save_kw, compression = (
@@ -173,3 +180,101 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
         jpegs.append(buf.getvalue())
     with _atomic(out_path) as tmp:
         tmp.write_bytes(img2pdf.convert(jpegs))
+
+
+_EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>
+"""
+
+# ponytail: deliberately minimal — no width/height rules. A reader that scales an
+# image to fit and centres it (the Xteink X4's firmware does both) gets it right on
+# its own, and forcing a CSS width sends it down a different code path where it may
+# scale up unpredictably. The images are already sized; let the renderer be dumb.
+_EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
+
+
+def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
+               max_width: int | None, grayscale: bool, gamma: float,
+               upscale: bool = False) -> None:
+    """Write an EPUB 3 with one image per page, right-to-left (manga order).
+    For readers that take neither CBZ nor PDF — the Xteink X4 reads epub/txt/bmp
+    only. No dependency: an EPUB is a zip with a fixed layout, and pack() already
+    writes zips atomically."""
+    title = escape(out_path.stem)
+    # uuid5, not uuid4: re-processing a volume must yield the same id, or the
+    # reader treats it as a new book and drops the reading position.
+    uid = uuid.uuid5(uuid.NAMESPACE_URL, out_path.stem)
+    modified = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    items, spine = [], []
+    for i in range(1, len(images) + 1):
+        cover = ' properties="cover-image"' if i == 1 else ""
+        items.append(f'    <item id="img{i:04d}" href="img/{i:04d}.jpg" '
+                     f'media-type="image/jpeg"{cover}/>')
+        items.append(f'    <item id="p{i:04d}" href="p{i:04d}.xhtml" '
+                     f'media-type="application/xhtml+xml"/>')
+        spine.append(f'    <itemref idref="p{i:04d}"/>')
+
+    opf = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="bookid">\n'
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
+        f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>\n'
+        f'    <dc:title>{title}</dc:title>\n'
+        '    <dc:language>en</dc:language>\n'
+        f'    <meta property="dcterms:modified">{modified}</meta>\n'
+        '  </metadata>\n'
+        '  <manifest>\n'
+        '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+        'properties="nav"/>\n'
+        '    <item id="css" href="style.css" media-type="text/css"/>\n'
+        + "\n".join(items) + "\n"
+        '  </manifest>\n'
+        '  <spine page-progression-direction="rtl">\n'   # manga reads right to left
+        + "\n".join(spine) + "\n"
+        '  </spine>\n'
+        '</package>\n'
+    )
+
+    nav = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" '
+        'xmlns:epub="http://www.idpf.org/2007/ops">\n'
+        f'<head><title>{title}</title></head>\n'
+        '<body><nav epub:type="toc"><ol>'
+        f'<li><a href="p0001.xhtml">{title}</a></li>'
+        '</ol></nav></body>\n</html>\n'
+    )
+
+    with _atomic(out_path) as tmp:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+            # the spec requires mimetype to be the first entry and uncompressed
+            z.writestr("mimetype", "application/epub+zip",
+                       compress_type=zipfile.ZIP_STORED)
+            z.writestr("META-INF/container.xml", _EPUB_CONTAINER)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/nav.xhtml", nav)
+            z.writestr("OEBPS/style.css", _EPUB_CSS)
+            for i, img in enumerate(images, start=1):
+                z.writestr(f"OEBPS/p{i:04d}.xhtml",
+                           '<?xml version="1.0" encoding="utf-8"?>\n'
+                           '<html xmlns="http://www.w3.org/1999/xhtml">\n'
+                           f'<head><title>{i}</title>'
+                           '<link rel="stylesheet" type="text/css" href="style.css"/>'
+                           '</head>\n'
+                           f'<body><img src="img/{i:04d}.jpg" alt=""/></body>\n'
+                           '</html>\n')
+                im = _eink(_fit(img, max_width, upscale=upscale),
+                           grayscale=grayscale, gamma=gamma)
+                if im.mode not in ("L", "RGB"):
+                    im = im.convert("RGB")
+                buf = io.BytesIO()
+                im.save(buf, "JPEG", quality=quality)
+                # jpeg is already compressed: STORED avoids pointless recompression
+                z.writestr(f"OEBPS/img/{i:04d}.jpg", buf.getvalue(),
+                           compress_type=zipfile.ZIP_STORED)
