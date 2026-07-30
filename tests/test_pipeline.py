@@ -61,6 +61,39 @@ def test_single_panel_page_emitted_once(tmp_path):
     assert process_archive(src, out) == 1         # 1 panel ~ page -> no duplicate
 
 
+def _wide_panels_page():
+    # two wide panels stacked -> 2 boxes of 360x100 each (ratio 3.6)
+    arr = np.full((400, 400), 255, np.uint8)
+    arr[20:120, 20:380] = 0
+    arr[220:320, 20:380] = 0
+    return Image.fromarray(arr, "L").convert("RGB")
+
+
+def test_split_ratio_emits_whole_panel_then_slices(tmp_path):
+    src = tmp_path / "wide.cbz"
+    pack([_wide_panels_page()], src)
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, page_pos="off", split_ratio=1.0)
+    assert n == 10                                # 2 panels x (1 whole + 4 slices)
+    imgs = unpack(out)
+    assert imgs[0].size == (360, 100)             # the whole panel comes first
+    assert [im.size for im in imgs[1:5]] == [(90, 100)] * 4
+
+
+def test_split_ratio_off_changes_nothing(tmp_path):
+    src = tmp_path / "wide.cbz"
+    pack([_wide_panels_page()], src)
+    out = tmp_path / "out.cbz"
+    assert process_archive(src, out, page_pos="off") == 2
+
+
+def test_split_ratio_also_splits_a_single_panel_page(tmp_path):
+    src = tmp_path / "sp.cbz"
+    pack([_single_panel_page()], src)             # 200x200 page, 1 panel -> page whole
+    out = tmp_path / "out.cbz"
+    assert process_archive(src, out, split_ratio=0.5) == 3   # whole page + 2 slices
+
+
 def test_page_pos_after_puts_macro_last(tmp_path):
     src = tmp_path / "ch.cbz"
     pack([_grid_page()], src)
