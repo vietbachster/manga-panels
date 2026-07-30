@@ -181,3 +181,35 @@ def test_unpack_corrupt_entry_data_raises(tmp_path):
     cbz.write_bytes(data)
     with pytest.raises(BadArchive):    # wrapped zlib.error, not a raw traceback
         unpack(cbz)
+
+
+def test_fit_shrinks_a_wide_image():
+    from manga_panels.archive import _fit
+    assert _fit(Image.new("RGB", (200, 100)), 50).size == (50, 25)
+
+
+def test_fit_does_not_grow_by_default():
+    from manga_panels.archive import _fit
+    assert _fit(Image.new("RGB", (40, 20)), 100).size == (40, 20)
+
+
+def test_fit_grows_when_upscale_is_on():
+    from manga_panels.archive import _fit
+    assert _fit(Image.new("RGB", (40, 20)), 100, upscale=True).size == (100, 50)
+
+
+def test_fit_with_upscale_still_shrinks_a_wide_image():
+    from manga_panels.archive import _fit
+    assert _fit(Image.new("RGB", (200, 100)), 50, upscale=True).size == (50, 25)
+
+
+def test_fit_without_max_width_returns_the_same_object():
+    from manga_panels.archive import _fit
+    im = Image.new("RGB", (40, 20))
+    assert _fit(im, None, upscale=True) is im
+
+
+def test_pack_threads_upscale_to_the_images(tmp_path):
+    out = tmp_path / "up.cbz"
+    pack([Image.new("RGB", (40, 20))], out, fmt="png", max_width=100, upscale=True)
+    assert unpack(out)[0].size == (100, 50)

@@ -86,8 +86,12 @@ def _unpack_rar(path: Path) -> list[Image.Image]:
     return imgs
 
 
-def _fit(img: Image.Image, max_width: int | None) -> Image.Image:
-    if max_width and img.width > max_width:       # only shrink, never upscale
+def _fit(img: Image.Image, max_width: int | None, *, upscale: bool = False) -> Image.Image:
+    """Scale to max_width, keeping the aspect ratio. Shrinks only by default;
+    with upscale=True it also grows an image narrower than max_width — needed for
+    readers whose renderer refuses to scale up (the Xteink X4's firmware clamps
+    its scale factor to 1.0, so a narrow panel would sit small and letterboxed)."""
+    if max_width and (img.width > max_width or (upscale and img.width < max_width)):
         h = round(img.height * max_width / img.width)
         return img.resize((max_width, h), Image.LANCZOS)
     return img
@@ -121,12 +125,12 @@ def _atomic(out_path: Path):
 
 def pack(images: list[Image.Image], out_path: str | Path, *,
          fmt: str = "jpeg", quality: int = 90, max_width: int | None = None,
-         grayscale: bool = False, gamma: float = 1.0) -> None:
+         grayscale: bool = False, gamma: float = 1.0, upscale: bool = False) -> None:
     out_path = Path(out_path)
     fmt = fmt.lower()
     if fmt == "pdf":                              # a PDF file, one panel per page
         _pack_pdf(images, out_path, quality=quality, max_width=max_width,
-                  grayscale=grayscale, gamma=gamma)
+                  grayscale=grayscale, gamma=gamma, upscale=upscale)
         return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
@@ -141,13 +145,15 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
         with zipfile.ZipFile(tmp, "w", compression) as z:
             for i, img in enumerate(images, start=1):
                 buf = io.BytesIO()
-                im = _eink(_fit(img, max_width), grayscale=grayscale, gamma=gamma)
+                im = _eink(_fit(img, max_width, upscale=upscale),
+                           grayscale=grayscale, gamma=gamma)
                 im.save(buf, pil_fmt, **save_kw)
                 z.writestr(f"{i:04d}.{ext}", buf.getvalue())
 
 
 def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
-              max_width: int | None, grayscale: bool, gamma: float) -> None:
+              max_width: int | None, grayscale: bool, gamma: float,
+              upscale: bool = False) -> None:
     """Embed each panel as a PDF page. img2pdf stores the JPEG bytes as-is (no
     re-encode), so no extra quality loss. For Kindle & other PDF-only readers."""
     try:
@@ -159,7 +165,7 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
         ) from e
     jpegs = []
     for img in images:
-        im = _eink(_fit(img, max_width), grayscale=grayscale, gamma=gamma)
+        im = _eink(_fit(img, max_width, upscale=upscale), grayscale=grayscale, gamma=gamma)
         if im.mode not in ("L", "RGB"):
             im = im.convert("RGB")
         buf = io.BytesIO()
