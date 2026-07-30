@@ -84,7 +84,8 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="which side of page 1 the front cover is on (default left)")
     g_lay.add_argument("--split-ratio", type=float, default=None,
                        help="cut panels wider than N:1 into vertical slices, read "
-                            "right to left (try 1.0 on a small screen; off by default)")
+                            "right to left (try 1.0 on a small screen; "
+                            "0 = never split; off by default)")
     return ap
 
 
@@ -192,8 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]error:[/] cover not found: {escape(args.cover)}")
         return 1
 
-    if args.split_ratio is not None and not (args.split_ratio > 0):   # rejects NaN too
-        console.print("[red]error:[/] --split-ratio must be > 0")
+    # 0 is the "off" sentinel (process_archive skips splitting on a falsy value), so
+    # a device preset that enables splitting stays switchable from the command line.
+    if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
+        console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
         return 1
 
     if args.format == "pdf":                    # fail fast, before loading the model

@@ -51,3 +51,9 @@ def test_bad_toml_raises(tmp_path):
 def test_no_file_returns_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "_DISCOVER", [tmp_path / "manga-panels.toml"])
     assert load_config(None) == {}     # no file -> no defaults
+
+
+def test_config_accepts_upscale(tmp_path):
+    cfg = tmp_path / "manga-panels.toml"
+    cfg.write_text("[defaults]\nupscale = true\n")
+    assert load_config(str(cfg)) == {"upscale": True}

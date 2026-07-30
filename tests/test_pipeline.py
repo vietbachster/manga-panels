@@ -445,13 +445,6 @@ def test_cli_device_x4_and_split_ratio(tmp_path, monkeypatch):
     assert captured["max_width"] == 480 and captured["split_ratio"] == 1.0
 
 
-def test_cli_rejects_non_positive_split_ratio(tmp_path):
-    from manga_panels.cli import main
-    src = tmp_path / "ch.cbz"
-    pack([_grid_page()], src)
-    assert main([str(src), "--split-ratio", "0"]) == 1
-
-
 def test_cli_rejects_nan_split_ratio(tmp_path):
     # nan <= 0 is False, so a naive guard lets it through; catch it here instead
     # of letting it fail late (after Magi loads) with an opaque ValueError.
@@ -554,3 +547,22 @@ def test_cli_preview_accepts_upscale(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--preview", "--upscale", "--max-width", "300"]) == 0
     assert (tmp_path / "ch_preview.cbz").exists()
+
+
+def test_cli_split_ratio_zero_means_no_split(tmp_path):
+    # 0 is the "off" sentinel, so a device preset that turns splitting on can be
+    # turned back off from the command line
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "0", "-o", str(tmp_path / "zero.cbz")]) == 0
+    assert main([str(src), "-o", str(tmp_path / "none.cbz")]) == 0
+    assert len(unpack(tmp_path / "zero.cbz")) == len(unpack(tmp_path / "none.cbz"))
+
+
+def test_cli_still_rejects_negative_and_nan_split_ratio(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "-1"]) == 1
+    assert main([str(src), "--split-ratio", "nan"]) == 1
