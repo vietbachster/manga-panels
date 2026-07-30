@@ -47,6 +47,34 @@ def test_include_page_not_duplicated_when_whole_page(tmp_path):
     assert process_archive(src, out) == 1         # 0 panels -> page once
 
 
+def _gradient_page(w=64, h=48):
+    # every pixel a distinct color (no row/column repeats), so an exact pixel
+    # comparison catches a crop/shift/flip regression; luma stays >=128
+    # everywhere so the fake detector finds zero dark blobs (0 panels).
+    ys, xs = np.mgrid[0:h, 0:w]
+    r = 150 + (xs * 3) % 100
+    g = 150 + (ys * 5) % 100
+    b = 150 + ((xs + ys) * 2) % 100
+    arr = np.stack([r, g, b], axis=-1).astype(np.uint8)
+    return Image.fromarray(arr, "RGB")
+
+
+def test_zero_panel_page_pixel_identical_when_split_off(tmp_path):
+    # regression: the <=1 panel branch now crops a synthetic full-page box
+    # through _panel_imgs instead of appending `page` directly. With
+    # split_ratio=None the two must be pixel-for-pixel identical.
+    page = _gradient_page()
+    src = tmp_path / "grad.cbz"
+    pack([page], src, fmt="png")                  # lossless round-trip
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, fmt="png", split_ratio=None)
+    assert n == 1                                 # 0 panels -> page once
+    [got] = unpack(out)
+    assert got.size == page.size
+    assert got.mode == page.mode
+    assert np.array_equal(np.asarray(got), np.asarray(page))
+
+
 def _single_panel_page():
     # white page with ONE black rectangle and no internal gutter -> 1 panel
     arr = np.full((200, 200), 255, np.uint8)
@@ -59,6 +87,77 @@ def test_single_panel_page_emitted_once(tmp_path):
     pack([_single_panel_page()], src)
     out = tmp_path / "out.cbz"
     assert process_archive(src, out) == 1         # 1 panel ~ page -> no duplicate
+
+
+def test_single_panel_page_pixel_identical_when_split_off(tmp_path):
+    # same regression guard as test_zero_panel_page_pixel_identical_when_split_off,
+    # for the other shape of the <=1 panel branch (exactly 1 detected panel).
+    page = _single_panel_page()
+    src = tmp_path / "sp.cbz"
+    pack([page], src, fmt="png")                  # lossless round-trip
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, fmt="png", split_ratio=None)
+    assert n == 1                                 # 1 panel ~ page -> no duplicate
+    [got] = unpack(out)
+    assert got.size == page.size
+    assert got.mode == page.mode
+    assert np.array_equal(np.asarray(got), np.asarray(page))
+
+
+def test_zero_panel_page_appended_by_identity_not_copy(tmp_path, monkeypatch):
+    # Pixel-equality can't catch a regression here: cropping a page to its own
+    # full bounding box is pixel-identical to the page whether or not that
+    # crop is a fresh copy. Object identity is what tells "appended `page`"
+    # apart from "appended a crop of it" -- and the no-copy path exists
+    # specifically to avoid doubling peak RAM on <=1-panel pages (measured
+    # 628MB -> 1176MB on a 40-page archive when this regressed).
+    import manga_panels.pipeline as pipeline
+
+    page = Image.new("RGB", (10, 10), (255, 255, 255))   # blank -> 0 panels
+    captured = {}
+
+    def _fake_pack(imgs, out, **kw):
+        captured["imgs"] = imgs
+
+    monkeypatch.setattr(pipeline, "unpack", lambda path: [page])
+    monkeypatch.setattr(pipeline, "pack", _fake_pack)
+
+    process_archive(tmp_path / "in.cbz", tmp_path / "out.cbz", split_ratio=None)
+
+    assert captured["imgs"][0] is page             # same object, no full-page copy
+
+
+def _wide_panels_page():
+    # two wide panels stacked -> 2 boxes of 360x100 each (ratio 3.6)
+    arr = np.full((400, 400), 255, np.uint8)
+    arr[20:120, 20:380] = 0
+    arr[220:320, 20:380] = 0
+    return Image.fromarray(arr, "L").convert("RGB")
+
+
+def test_split_ratio_emits_whole_panel_then_slices(tmp_path):
+    src = tmp_path / "wide.cbz"
+    pack([_wide_panels_page()], src)
+    out = tmp_path / "out.cbz"
+    n = process_archive(src, out, page_pos="off", split_ratio=1.0)
+    assert n == 10                                # 2 panels x (1 whole + 4 slices)
+    imgs = unpack(out)
+    assert imgs[0].size == (360, 100)             # the whole panel comes first
+    assert [im.size for im in imgs[1:5]] == [(90, 100)] * 4
+
+
+def test_split_ratio_off_changes_nothing(tmp_path):
+    src = tmp_path / "wide.cbz"
+    pack([_wide_panels_page()], src)
+    out = tmp_path / "out.cbz"
+    assert process_archive(src, out, page_pos="off") == 2
+
+
+def test_split_ratio_also_splits_a_single_panel_page(tmp_path):
+    src = tmp_path / "sp.cbz"
+    pack([_single_panel_page()], src)             # 200x200 page, 1 panel -> page whole
+    out = tmp_path / "out.cbz"
+    assert process_archive(src, out, split_ratio=0.5) == 3   # whole page + 2 slices
 
 
 def test_page_pos_after_puts_macro_last(tmp_path):
@@ -327,6 +426,39 @@ def test_cli_device_resolves_max_width(tmp_path, monkeypatch):
     pack([_grid_page()], src)
     assert main([str(src), "--device", "scribe", "--grayscale"]) == 0
     assert captured["max_width"] == 1860 and captured["grayscale"] is True
+
+
+def test_cli_device_x4_and_split_ratio(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out, fmt=kw.get("fmt", "jpeg"))
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--device", "x4", "--split-ratio", "1.0"]) == 0
+    assert captured["max_width"] == 480 and captured["split_ratio"] == 1.0
+
+
+def test_cli_rejects_non_positive_split_ratio(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "0"]) == 1
+
+
+def test_cli_rejects_nan_split_ratio(tmp_path):
+    # nan <= 0 is False, so a naive guard lets it through; catch it here instead
+    # of letting it fail late (after Magi loads) with an opaque ValueError.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "nan"]) == 1
 
 
 def test_cli_format_pdf_writes_pdf(tmp_path):

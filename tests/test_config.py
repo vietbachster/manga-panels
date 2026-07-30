@@ -30,6 +30,12 @@ def test_library_and_suffix_keys_accepted(tmp_path):
     assert load_config(str(cfg)) == {"library": "/data/manga", "suffix": "_cut"}
 
 
+def test_split_ratio_key_accepted(tmp_path):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\nsplit-ratio = 1.0\n')
+    assert load_config(str(cfg)) == {"split_ratio": 1.0}
+
+
 def test_missing_explicit_raises(tmp_path):
     with pytest.raises(MangaPanelsError):
         load_config(str(tmp_path / "nope.toml"))

@@ -107,10 +107,11 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 |---|---|
 | `--preview` | `<stem>_preview.cbz` com os painéis desenhados/numerados (confere os cortes) |
 | `--debug` | `<stem>_debug.cbz` com tudo que o Magi vê (personagens, balões, quem fala) |
-| `--device paperwhite` | preset de `--max-width` por leitor (`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
+| `--device paperwhite` | preset de `--max-width` por leitor (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
 | `--grayscale` | tons de cinza — menor e nativo do e-ink |
 | `--gamma 1.8` | escurece os meios-tons pro e-ink (mais contraste; `1.0` = off) |
 | `--page before\|after\|off` | onde entra a página inteira (macro) — default `before` |
+| `--split-ratio 1.0` | corta painel mais largo que N:1 em fatias verticais (direita→esquerda); o painel inteiro sai antes das fatias |
 | `--keep-first N` | mantém as N primeiras páginas inteiras (capa/miolo) |
 | `--cover img.jpg` | põe essa imagem como página 1 — a **thumbnail** do PDF na biblioteca |
 | `--cover-crop 0.4` | tira a capa de uma **página 1 larga** (wraparound): fração da largura; `--cover-side left/right` |
@@ -152,6 +153,7 @@ aparelho:
 
 | dispositivo | tela (px) | `--max-width` |
 |---|---|---|
+| Xteink X4 (4.3", 220 ppi) | 800×480 | `480` |
 | Kindle básico / Kobo Clara / Boox Poke (6", 300 ppi) | 1072×1448 | `1072` |
 | Kindle Paperwhite 11ª (6.8") | 1236×1648 | `1236` |
 | Kindle Paperwhite 12ª / Oasis / Colorsoft, Kobo Libra, Boox Page (7") | 1264×1680 | `1264` |
@@ -163,6 +165,27 @@ aparelho:
 Valores aproximados (variam por modelo/ano). Na dúvida, `1264` cobre bem a maioria
 dos leitores de 6–7". Em vez de decorar o número, use o preset: `--device paperwhite`
 (= `--max-width 1264`), `--device scribe`, etc.
+
+Em telas pequenas (o X4 tem 480px de largura e proporção 0.6) um painel deitado
+vira uma faixa ilegível. `--split-ratio 1.0` corta todo painel landscape em
+fatias verticais, na ordem de leitura, com o painel inteiro antes delas pra dar
+o contexto. As emendas desviam de balões e personagens. Comece em `1.0` e
+calibre com `--preview` — um limiar perto da proporção da tela (0.6) estilhaça
+quase tudo. Atenção: `--preview` mostra só a detecção de painel (**quais** são
+largos demais), não onde as emendas caem nem quantas fatias saem — pra isso
+compare o resultado com/sem `--split-ratio` no próprio cbz de saída.
+
+`--split-ratio` aumenta o número de imagens e o tamanho do arquivo (o painel
+inteiro **e** as fatias entram na saída). Medido num volume de 20 páginas com
+`--device x4 --grayscale`: sem split, 140 imagens / 5,7 MB; `--split-ratio 1.5`,
+240 imagens / 8,2 MB; `--split-ratio 1.0`, 400 imagens (2,9x) / 13,4 MB (2,4x).
+Note também que `--page off` só suprime a página inteira (macro) — o painel
+inteiro antes de cada conjunto de fatias continua saindo; é assim de propósito,
+pra dar contexto antes das fatias.
+
+```bash
+manga-panels capitulo.cbz --device x4 --split-ratio 1.0 --grayscale
+```
 
 Pra e-ink, `--grayscale` (menor e nativo do e-paper) e `--gamma 1.8` (escurece os
 meios-tons, mais contraste) melhoram a leitura.

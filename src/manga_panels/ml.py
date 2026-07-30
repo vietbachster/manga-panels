@@ -144,10 +144,17 @@ class MagiDetector:
         with torch.no_grad():
             return model.predict_detections_and_associations([arr])[0]
 
-    def detect(self, page: Image.Image) -> list[Box]:
+    def detect_split(self, page: Image.Image) -> tuple[list[Box], list[list[float]]]:
+        """One inference pass -> (panels in reading order, boxes a slice seam
+        must not cut through). Obstacles are every text — SFX included, cutting
+        one in half reads just as badly as cutting a balloon — plus characters."""
         r = self.detect_raw(page)
-        return _panels_to_boxes(r["panels"], r["texts"], page.width, page.height,
-                                characters=r["characters"], essential=r["is_essential_text"])
+        boxes = _panels_to_boxes(r["panels"], r["texts"], page.width, page.height,
+                                 characters=r["characters"], essential=r["is_essential_text"])
+        return boxes, [_norm(b) for b in [*r["texts"], *r["characters"]]]
+
+    def detect(self, page: Image.Image) -> list[Box]:
+        return self.detect_split(page)[0]
 
     def warmup(self) -> None:
         _load_magi()                  # load the singleton (spinner in the CLI)
