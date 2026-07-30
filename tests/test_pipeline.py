@@ -429,6 +429,15 @@ def test_cli_rejects_non_positive_split_ratio(tmp_path):
     assert main([str(src), "--split-ratio", "0"]) == 1
 
 
+def test_cli_rejects_nan_split_ratio(tmp_path):
+    # nan <= 0 is False, so a naive guard lets it through; catch it here instead
+    # of letting it fail late (after Magi loads) with an opaque ValueError.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--split-ratio", "nan"]) == 1
+
+
 def test_cli_format_pdf_writes_pdf(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"

@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]error:[/] cover not found: {escape(args.cover)}")
         return 1
 
-    if args.split_ratio is not None and args.split_ratio <= 0:
+    if args.split_ratio is not None and not (args.split_ratio > 0):   # rejects NaN too
         console.print("[red]error:[/] --split-ratio must be > 0")
         return 1
 
