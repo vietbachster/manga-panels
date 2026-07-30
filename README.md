@@ -191,6 +191,14 @@ Duas particularidades do aparelho, ambas lidas do fonte do firmware:
 manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 80 --split-ratio 1.0
 ```
 
+`--upscale` tem um custo que vale saber antes de esperar a transferência: painéis
+estreitos são reamostrados pra largura cheia da tela, o que engorda o JPEG. Medido
+num volume real (FMA vol. 01, 2172 imagens de saída): 62 MB sem `--upscale` contra
+114 MB com — quase o dobro, bem mais que os 27% que o `-q 80` economiza acima. É o
+preço de não deixar as fatias renderizarem como selo postal na tela. Se o tempo de
+transferência pelo WiFi do X4 doer mais que os painéis pequenos, a alavanca é
+baixar o `-q` ainda mais, ou simplesmente deixar `--upscale` de fora.
+
 `--split-ratio 0` desliga o corte de painel largo, se quiser comparar.
 
 Em telas pequenas (o X4 tem 480px de largura e proporção 0.6) um painel deitado
