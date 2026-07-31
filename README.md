@@ -237,7 +237,7 @@ sozinhas (≤1 painel), sem duplicar.
 
 ### Capítulos
 
-Se o CBZ/CBR tiver um `ComicInfo.xml` com marcações de capítulo, elas aparecem no
+Se o CBZ tiver um `ComicInfo.xml` com marcações de capítulo, elas aparecem no
 índice do EPUB e nos marcadores do PDF. O campo é o padrão do formato:
 
 ```xml
