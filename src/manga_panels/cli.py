@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from rich.console import Console
@@ -20,7 +21,7 @@ from manga_panels.preview import preview_archive
 _EXTS = {".cbz", ".cbr", ".zip", ".rar"}
 # screen-width presets for --device (a shortcut for --max-width)
 _DEVICES = {
-    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --split-ratio
+    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --rotate-wide/--pad-aspect
     "basic": 1072,       # Kindle basic / Kobo Clara / Boox Poke (6")
     "pw11": 1236,        # Kindle Paperwhite 11th gen (6.8")
     "paperwhite": 1264,  # Paperwhite 12th / Oasis / Kobo Libra / Boox Page (7")
@@ -38,7 +39,9 @@ def _aspect(text: str) -> float:
     try:
         w, _, h = text.partition(":")
         fw, fh = float(w), float(h)
-        if not (fw > 0) or not (fh > 0):   # rejects NaN too (every NaN comparison is False)
+        # rejects NaN too (every NaN comparison is False) and +/-inf, which would
+        # otherwise slip through as a "positive number" and blow up downstream
+        if not (math.isfinite(fw) and fw > 0) or not (math.isfinite(fh) and fh > 0):
             raise ValueError
     except ValueError:
         raise argparse.ArgumentTypeError(

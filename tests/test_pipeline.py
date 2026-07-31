@@ -595,12 +595,21 @@ def test_cli_preview_accepts_geometry_flags(tmp_path):
     assert (tmp_path / "ch_preview.cbz").exists()
 
 
+def test_cli_debug_accepts_geometry_flags(tmp_path):
+    # --debug routes to yet another function; a one-sided param is a TypeError
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--debug", "--rotate-wide", "1.0", "--pad-aspect", "3:5"]) == 0
+    assert (tmp_path / "ch_debug.cbz").exists()
+
+
 def test_cli_rejects_a_bad_pad_aspect(tmp_path):
     import pytest
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
     pack([_grid_page()], src)
-    for bad in ("3x5", "0:5", "5:0", "abc", "nan:5", "5:nan"):
+    for bad in ("3x5", "0:5", "5:0", "abc", "nan:5", "5:nan", "inf:5", "5:inf"):
         with pytest.raises(SystemExit) as e:      # argparse type error
             main([str(src), "--pad-aspect", bad])
         assert e.value.code == 2
