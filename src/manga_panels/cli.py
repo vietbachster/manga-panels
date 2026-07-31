@@ -184,7 +184,8 @@ def main(argv: list[str] | None = None) -> int:
         kw = {**common, "page_pos": args.page, "keep_first": args.keep_first,
               "grayscale": args.grayscale, "gamma": args.gamma, "cover": args.cover,
               "cover_crop": args.cover_crop, "cover_side": args.cover_side,
-              "split_ratio": args.split_ratio}
+              "split_ratio": args.split_ratio,
+              "warn": lambda m: console.print(f"[yellow]{escape(m)}[/]")}
         suffix = f"{args.suffix}.{ext}"
 
     if args.input is None:

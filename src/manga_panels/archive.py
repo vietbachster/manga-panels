@@ -217,18 +217,25 @@ def _atomic(out_path: Path):
 def pack(images: list[Image.Image], out_path: str | Path, *,
          fmt: str = "jpeg", quality: int = 90, max_width: int | None = None,
          grayscale: bool = False, gamma: float = 1.0, upscale: bool = False,
-         rotate_wide: float | None = None, pad_aspect: float | None = None) -> None:
+         rotate_wide: float | None = None, pad_aspect: float | None = None,
+         page_starts: list[tuple[int, str]] | None = None,
+         chapters: list[tuple[int, str]] | None = None,
+         title: str | None = None, creator: str | None = None) -> None:
     out_path = Path(out_path)
     fmt = fmt.lower()
     if fmt == "pdf":                              # a PDF file, one panel per page
         _pack_pdf(images, out_path, quality=quality, max_width=max_width,
                   grayscale=grayscale, gamma=gamma, upscale=upscale,
-                  rotate_wide=rotate_wide, pad_aspect=pad_aspect)
+                  rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                  page_starts=page_starts, chapters=chapters,
+                  title=title, creator=creator)
         return
     if fmt == "epub":                             # one image per page, for epub-only readers
         _pack_epub(images, out_path, quality=quality, max_width=max_width,
                    grayscale=grayscale, gamma=gamma, upscale=upscale,
-                   rotate_wide=rotate_wide, pad_aspect=pad_aspect)
+                   rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                   page_starts=page_starts, chapters=chapters,
+                   title=title, creator=creator)
         return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
@@ -253,7 +260,10 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
 def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
               max_width: int | None, grayscale: bool, gamma: float,
               upscale: bool = False, rotate_wide: float | None = None,
-              pad_aspect: float | None = None) -> None:
+              pad_aspect: float | None = None,
+              page_starts: list[tuple[int, str]] | None = None,
+              chapters: list[tuple[int, str]] | None = None,
+              title: str | None = None, creator: str | None = None) -> None:
     """Embed each panel as a PDF page. img2pdf stores the JPEG bytes as-is (no
     re-encode), so no extra quality loss. For Kindle & other PDF-only readers."""
     try:
@@ -295,7 +305,10 @@ _EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
 def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                max_width: int | None, grayscale: bool, gamma: float,
                upscale: bool = False, rotate_wide: float | None = None,
-               pad_aspect: float | None = None) -> None:
+               pad_aspect: float | None = None,
+               page_starts: list[tuple[int, str]] | None = None,
+               chapters: list[tuple[int, str]] | None = None,
+               title: str | None = None, creator: str | None = None) -> None:
     """Write an EPUB 3 with one image per page, right-to-left (manga order).
     For readers that take neither CBZ nor PDF — the Xteink X4 reads epub/txt/bmp
     only. No dependency: an EPUB is a zip with a fixed layout, and pack() already
