@@ -621,3 +621,133 @@ def test_cli_rejects_a_negative_rotate_wide(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--rotate-wide", "-1"]) == 1
     assert main([str(src), "--rotate-wide", "nan"]) == 1
+
+
+def test_page_starts_marks_every_source_page(tmp_path, monkeypatch):
+    import manga_panels.pipeline as pl
+    captured = {}
+    real = pl.pack
+
+    def spy(imgs, out, **kw):
+        captured.update(kw)
+        return real(imgs, out, **{k: v for k, v in kw.items()
+                                  if k not in ("page_starts", "chapters",
+                                               "title", "creator")})
+
+    monkeypatch.setattr(pl, "pack", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page(), _grid_page()], src)      # 2 pages, 4 panels each
+    process_archive(src, tmp_path / "out.cbz", page_pos="off")
+    starts = captured["page_starts"]
+    assert [lbl for _, lbl in starts] == ["Página 1", "Página 2"]
+    assert [i for i, _ in starts] == [0, 4]      # 4 panels before page 2 begins
+
+
+def test_page_starts_labels_the_cover(tmp_path, monkeypatch):
+    import manga_panels.pipeline as pl
+    captured = {}
+    real = pl.pack
+
+    def spy(imgs, out, **kw):
+        captured.update(kw)
+        return real(imgs, out, **{k: v for k, v in kw.items()
+                                  if k not in ("page_starts", "chapters",
+                                               "title", "creator")})
+
+    monkeypatch.setattr(pl, "pack", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    cov = tmp_path / "cov.png"
+    Image.new("RGB", (20, 30)).save(cov)
+    process_archive(src, tmp_path / "out.cbz", cover=str(cov), page_pos="off")
+    assert captured["page_starts"][0] == (0, "Capa")
+
+
+def test_chapters_are_resolved_to_image_indices(tmp_path, monkeypatch):
+    # ComicInfo indexes SOURCE PAGES; the packers need indices into the output
+    # image list, which is longer because each page explodes into panels
+    import io as _io, zipfile as _zip
+    import manga_panels.pipeline as pl
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="1" Bookmark="Cap 2"/></Pages></ComicInfo>')
+        for i in range(2):
+            b = _io.BytesIO(); _grid_page().save(b, "PNG")
+            z.writestr(f"{i:03d}.png", b.getvalue())
+    captured = {}
+    real = pl.pack
+
+    def spy(imgs, out, **kw):
+        captured.update(kw)
+        return real(imgs, out, **{k: v for k, v in kw.items()
+                                  if k not in ("page_starts", "chapters",
+                                               "title", "creator")})
+
+    monkeypatch.setattr(pl, "pack", spy)
+    process_archive(src, tmp_path / "out.cbz", page_pos="off")
+    assert captured["chapters"] == [(4, "Cap 2")]   # source page 1 starts at image 4
+
+
+def test_chapter_outside_the_volume_is_dropped_with_a_warning(tmp_path):
+    # a chapter that silently vanishes is worse than one that is obviously wrong
+    import io as _io, zipfile as _zip
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="99" Bookmark="Fantasma"/>'
+                   '<Page Image="0" Bookmark="Real"/></Pages></ComicInfo>')
+        b = _io.BytesIO(); _grid_page().save(b, "PNG")
+        z.writestr("000.png", b.getvalue())
+    said = []
+    n = process_archive(src, tmp_path / "out.cbz", page_pos="off",
+                        warn=said.append)
+    assert n > 0
+    assert len(said) == 1 and "Fantasma" in said[0]
+
+
+def test_negative_chapter_index_warns_coherently(tmp_path):
+    # p + 1 turns p == -1 into "page 0", which reads as 0-based right next to
+    # a message that otherwise counts pages from 1 -- a negative index must be
+    # named as what it is instead
+    import io as _io, zipfile as _zip
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="-1" Bookmark="Negative"/>'
+                   '</Pages></ComicInfo>')
+        b = _io.BytesIO(); _grid_page().save(b, "PNG")
+        z.writestr("000.png", b.getvalue())
+    said = []
+    process_archive(src, tmp_path / "out.cbz", page_pos="off", warn=said.append)
+    assert len(said) == 1
+    assert "page 0" not in said[0]
+    assert "page index -1" in said[0]
+
+
+def test_duplicate_chapter_marks_at_same_index_keep_first_with_a_warning(tmp_path, monkeypatch):
+    # same philosophy as the out-of-range case above: a chapter that vanishes
+    # without a signal is worse than one that is obviously wrong
+    import io as _io, zipfile as _zip
+    import manga_panels.pipeline as pl
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="0" Bookmark="First"/>'
+                   '<Page Image="0" Bookmark="Second"/></Pages></ComicInfo>')
+        b = _io.BytesIO(); _grid_page().save(b, "PNG")
+        z.writestr("000.png", b.getvalue())
+    captured = {}
+    real = pl.pack
+
+    def spy(imgs, out, **kw):
+        captured.update(kw)
+        return real(imgs, out, **{k: v for k, v in kw.items()
+                                  if k not in ("page_starts", "chapters",
+                                               "title", "creator")})
+
+    monkeypatch.setattr(pl, "pack", spy)
+    said = []
+    process_archive(src, tmp_path / "out.cbz", page_pos="off", warn=said.append)
+    assert captured["chapters"] == [(0, "First")]        # first kept, second dropped
+    assert len(said) == 1 and "First" in said[0] and "Second" in said[0]

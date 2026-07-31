@@ -4,6 +4,7 @@ import io
 import os
 import re
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from contextlib import contextmanager
@@ -56,6 +57,54 @@ def load_image(path: str | Path) -> Image.Image:
     except OSError as e:
         raise BadArchive(f"cannot read image {path}: {e}") from e
     return _load(data)
+
+
+def read_comicinfo(path: str | Path) -> dict:
+    """Title, creator and chapter marks from a ComicInfo.xml inside the archive.
+    Chapters come from Page/@Bookmark — the standard field, so anything that
+    writes ComicInfo can supply them and we invent no format of our own.
+
+    Indices are read straight from Page/@Image and never derived from printed
+    page numbers: a double-page spread stored as one image shifts the count
+    mid-volume, so any fixed offset silently misplaces every later chapter.
+
+    Metadata is a nicety, never a reason to fail: an absent, unreadable or
+    malformed ComicInfo yields {}."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            name = next((n for n in z.namelist()
+                         if n.lower().endswith("comicinfo.xml")), None)
+            if name is None:
+                return {}
+            root = ET.fromstring(z.read(name))
+    except Exception:                       # ponytail: any failure here means "no metadata"
+        return {}
+
+    def text(tag: str) -> str:
+        return (root.findtext(tag) or "").strip()
+
+    series, volume = text("Series"), text("Volume")
+    title = f"{series} Vol. {volume}" if series and volume else series or text("Title")
+    pages = root.find("Pages")
+    # key=image index only: sorted() is stable, so two marks on the same page
+    # keep document order instead of being re-broken by bookmark text — "keep
+    # the first" (the caller's dedup) should mean "first in the file", not
+    # "first alphabetically".
+    chapters = sorted(
+        (
+            (int(p.get("Image")), (p.get("Bookmark") or "").strip())
+            for p in (pages if pages is not None else [])
+            if (p.get("Bookmark") or "").strip()
+            and (p.get("Image") or "").lstrip("-").isdecimal()
+        ),
+        key=lambda c: c[0],
+    )
+    out = {"chapters": chapters}
+    if title:
+        out["title"] = title
+    if text("Writer"):
+        out["creator"] = text("Writer")
+    return out if (title or chapters or out.get("creator")) else {}
 
 
 def _unpack_zip(path: Path) -> list[Image.Image]:
@@ -175,18 +224,25 @@ def _atomic(out_path: Path):
 def pack(images: list[Image.Image], out_path: str | Path, *,
          fmt: str = "jpeg", quality: int = 90, max_width: int | None = None,
          grayscale: bool = False, gamma: float = 1.0, upscale: bool = False,
-         rotate_wide: float | None = None, pad_aspect: float | None = None) -> None:
+         rotate_wide: float | None = None, pad_aspect: float | None = None,
+         page_starts: list[tuple[int, str]] | None = None,
+         chapters: list[tuple[int, str]] | None = None,
+         title: str | None = None, creator: str | None = None) -> None:
     out_path = Path(out_path)
     fmt = fmt.lower()
     if fmt == "pdf":                              # a PDF file, one panel per page
         _pack_pdf(images, out_path, quality=quality, max_width=max_width,
                   grayscale=grayscale, gamma=gamma, upscale=upscale,
-                  rotate_wide=rotate_wide, pad_aspect=pad_aspect)
+                  rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                  page_starts=page_starts, chapters=chapters,
+                  title=title, creator=creator)
         return
     if fmt == "epub":                             # one image per page, for epub-only readers
         _pack_epub(images, out_path, quality=quality, max_width=max_width,
                    grayscale=grayscale, gamma=gamma, upscale=upscale,
-                   rotate_wide=rotate_wide, pad_aspect=pad_aspect)
+                   rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                   page_starts=page_starts, chapters=chapters,
+                   title=title, creator=creator)
         return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
@@ -211,11 +267,15 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
 def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
               max_width: int | None, grayscale: bool, gamma: float,
               upscale: bool = False, rotate_wide: float | None = None,
-              pad_aspect: float | None = None) -> None:
+              pad_aspect: float | None = None,
+              page_starts: list[tuple[int, str]] | None = None,
+              chapters: list[tuple[int, str]] | None = None,
+              title: str | None = None, creator: str | None = None) -> None:
     """Embed each panel as a PDF page. img2pdf stores the JPEG bytes as-is (no
     re-encode), so no extra quality loss. For Kindle & other PDF-only readers."""
     try:
         import img2pdf
+        import pikepdf
     except ImportError as e:
         raise MissingDependency(
             "PDF output needs the [pdf] extra: uv sync --extra pdf "
@@ -231,8 +291,30 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=quality)
         jpegs.append(buf.getvalue())
-    with _atomic(out_path) as tmp:
-        tmp.write_bytes(img2pdf.convert(jpegs))
+    data = img2pdf.convert(jpegs)
+    if not page_starts:
+        with _atomic(out_path) as tmp:
+            tmp.write_bytes(data)
+        return
+    # An outline is the only navigation a PDF has. pikepdf is a hard requirement
+    # of img2pdf, so this costs no dependency, and libqpdf copies at the object
+    # level: the embedded JPEGs are never re-encoded.
+    chapter_at = {i: t for i, t in (chapters or [])}
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        if title:
+            pdf.docinfo["/Title"] = title
+        if creator:
+            pdf.docinfo["/Author"] = creator
+        with pdf.open_outline() as ol:
+            parent = None
+            for idx, label in page_starts:
+                if idx in chapter_at:
+                    parent = pikepdf.OutlineItem(chapter_at[idx], idx)
+                    ol.root.append(parent)
+                item = pikepdf.OutlineItem(label, idx)
+                (parent.children if parent is not None else ol.root).append(item)
+        with _atomic(out_path) as tmp:
+            pdf.save(tmp)
 
 
 _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
@@ -250,38 +332,171 @@ _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 _EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
 
 
+_EPUB_CHUNK = 20      # source pages per section when the book has no chapters
+
+# Floor on source pages between section boundaries when chapters drive them.
+# Below a real chapter (Monster's are ~20 source pages) but high enough that
+# crossing sections stays rare. Without it, a ComicInfo that bookmarks scene
+# breaks or extras every couple of pages reproduces — on every page turn — the
+# same "indexing" stall the chapter-sized section above exists to avoid.
+_EPUB_MIN_SECTION = 5
+
+# Ceiling on source pages between section boundaries when chapters drive them
+# — twice the chunk, not one, because a single chunk-width ceiling fires on
+# real chapters too. Monster's real marks run 20-27 source pages apart (measured
+# on the shipped volume, see test_epub_chapters_at_real_spacing_still_yield_one_
+# section_each): at a ceiling of exactly _EPUB_CHUNK, every such gap "exceeds"
+# it by a few pages, and forcing a boundary there means the *next* real mark's
+# own floor check now measures from that forced boundary instead of the true
+# previous one — an error that carries into the next gap and compounds, so a
+# steady run of ~22-page chapters ends up cutting far more than one section per
+# chapter. ponytail: a look-ahead ceiling (peek at the next mark before forcing
+# a split) would track the chunk size exactly with no slack, but this only needs
+# to turn "never bounded" into "eventually bounded" — doubling the chunk clears
+# every real gap seen so far with margin and still turns a lone or wildly
+# out-of-range mark's multi-hundred-page remainder into several sections
+# instead of one.
+_EPUB_SECTION_CEILING = _EPUB_CHUNK * 2
+
+
+def _epub_sections(page_starts, chapters):
+    """Section boundaries: the first image index of each section. Assumes
+    page_starts is non-empty — the caller only calls this when there are pages
+    to split.
+
+    A section is what the reader indexes when you enter it, and the size is a
+    real trade-off measured on the device: one section per image stalls on every
+    page turn, and a single section for the whole volume never stops extending
+    its index, which makes advancing unusable. A chapter (~20 source pages) pays
+    once on entry and then flows. Without chapters, chunk at the same size.
+
+    With chapters, _EPUB_SECTION_CEILING bounds every section from above too:
+    once the gap since the last boundary reaches it, the next page opens a new
+    section even without a chapter mark there. Otherwise a lone mark — or a
+    ComicInfo that disagrees with the archive's page count, so almost every mark
+    falls outside process_archive's range check and gets dropped — reproduces
+    the single-section book that never stops indexing.
+
+    A chapter within _EPUB_MIN_SECTION source pages of the previous boundary
+    does not open its own section — it still appears in the table of contents
+    (`_epub_nav` reads `chapters` directly, not this list), only the section
+    split is skipped."""
+    if not chapters:
+        return [page_starts[k][0] for k in range(0, len(page_starts), _EPUB_CHUNK)]
+    chapter_at = {idx for idx, _ in chapters}
+    bounds, last_ord = [0], 0
+    for o, (idx, _label) in enumerate(page_starts):
+        if o == 0:
+            continue
+        if idx in chapter_at:
+            if o - last_ord >= _EPUB_MIN_SECTION:
+                bounds.append(idx)
+                last_ord = o
+        elif o - last_ord >= _EPUB_SECTION_CEILING:
+            bounds.append(idx)
+            last_ord = o
+    return bounds
+
+
+def _epub_nav(starts, chapters, page_ord, sec_of) -> str:
+    """Nested table of contents: chapters at the top level, their pages beneath.
+    Page entries point at an anchor inside the section rather than at a section of
+    their own — that is what lets a section stay chapter-sized while the reader
+    can still jump to a single page.
+
+    Reads `chapters`, not the section titles: without chapters the sections are
+    named after their first page, and nesting those would turn every twentieth
+    page into a fake chapter."""
+    chapter_at = dict(chapters)
+    out, open_chapter = [], False
+    for idx, label in starts:
+        href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
+        if idx in chapter_at:
+            if open_chapter:
+                out.append("</ol></li>")
+            out.append(f'<li><a href="{href}">{escape(chapter_at[idx])}</a><ol>')
+            open_chapter = True
+        out.append(f'<li><a href="{href}">{escape(label)}</a></li>')
+    if open_chapter:
+        out.append("</ol></li>")
+    return "".join(out)
+
+
 def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                max_width: int | None, grayscale: bool, gamma: float,
                upscale: bool = False, rotate_wide: float | None = None,
-               pad_aspect: float | None = None) -> None:
-    """Write an EPUB 3 with one image per page, right-to-left (manga order).
+               pad_aspect: float | None = None,
+               page_starts: list[tuple[int, str]] | None = None,
+               chapters: list[tuple[int, str]] | None = None,
+               title: str | None = None, creator: str | None = None) -> None:
+    """Write an EPUB 3, right-to-left (manga order). With `page_starts` the book
+    is split into chapter-sized sections with an anchor at every source page, so
+    the table of contents navigates by real manga page instead of by panel;
+    without it, one image per document (the original shape).
+
     For readers that take neither CBZ nor PDF — the Xteink X4 reads epub/txt/bmp
-    only. No dependency: an EPUB is a zip with a fixed layout, and pack() already
-    writes zips atomically."""
-    title = escape(out_path.stem)
-    # uuid5, not uuid4: re-processing a volume must yield the same id, or the
-    # reader treats it as a new book and drops the reading position.
-    uid = uuid.uuid5(uuid.NAMESPACE_URL, out_path.stem)
+    only. No dependency: an EPUB is a zip with a fixed layout."""
+    book_title = title or out_path.stem
+    esc_title = escape(book_title)
+    # uuid5, not uuid4: re-processing the same file must yield the same id, or
+    # the reader treats it as a new book and drops the reading position. Seeded
+    # with out_path.stem too: two different archives can share a ComicInfo
+    # title (e.g. same Series, no Volume tag) and must not collide on one id.
+    uid = uuid.uuid5(uuid.NAMESPACE_URL, f"{book_title}\n{out_path.stem}")
     modified = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    items, spine = [], []
+    starts = list(page_starts or [])
+    chaps = list(chapters or [])
+    # image index -> 1-based page ordinal, for the #pagK anchors
+    page_ord = {idx: k for k, (idx, _) in enumerate(starts, start=1)}
+
+    items, spine, docs = [], [], []
+    if starts:
+        secs = _epub_sections(starts, chaps)
+        sec_of = {}                       # page ordinal -> section file name
+        # ponytail: _epub_sections used to pair each boundary with a title
+        # ("Início" for the untitled gap before the first chapter) that nothing
+        # here ever read — plain boundaries are enough.
+        for si, first in enumerate(secs, start=1):
+            last = secs[si] if si < len(secs) else len(images)
+            name = f"s{si:04d}.xhtml"
+            body = []
+            for j in range(first, last):
+                if j in page_ord:
+                    body.append(f'<a id="pag{page_ord[j]}"></a>')
+                    sec_of[page_ord[j]] = name
+                body.append(f'<img src="img/{j + 1:04d}.jpg" alt=""/>')
+            docs.append((name, "".join(body)))
+            items.append(f'    <item id="s{si:04d}" href="{name}" '
+                         f'media-type="application/xhtml+xml"/>')
+            spine.append(f'    <itemref idref="s{si:04d}"/>')
+        nav_items = _epub_nav(starts, chaps, page_ord, sec_of)
+    else:
+        for i in range(1, len(images) + 1):
+            docs.append((f"p{i:04d}.xhtml", f'<img src="img/{i:04d}.jpg" alt=""/>'))
+            items.append(f'    <item id="p{i:04d}" href="p{i:04d}.xhtml" '
+                         f'media-type="application/xhtml+xml"/>')
+            spine.append(f'    <itemref idref="p{i:04d}"/>')
+        nav_items = f'<li><a href="p0001.xhtml">{esc_title}</a></li>'
+
     for i in range(1, len(images) + 1):
         cover = ' properties="cover-image"' if i == 1 else ""
         items.append(f'    <item id="img{i:04d}" href="img/{i:04d}.jpg" '
                      f'media-type="image/jpeg"{cover}/>')
-        items.append(f'    <item id="p{i:04d}" href="p{i:04d}.xhtml" '
-                     f'media-type="application/xhtml+xml"/>')
-        spine.append(f'    <itemref idref="p{i:04d}"/>')
+
+    meta = [f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>',
+            f'    <dc:title>{esc_title}</dc:title>']
+    if creator:
+        meta.append(f'    <dc:creator>{escape(creator)}</dc:creator>')
+    meta += ['    <dc:language>en</dc:language>',
+             f'    <meta property="dcterms:modified">{modified}</meta>']
 
     opf = "\n".join([
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
         'unique-identifier="bookid">',
         '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
-        f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>',
-        f'    <dc:title>{title}</dc:title>',
-        '    <dc:language>en</dc:language>',
-        f'    <meta property="dcterms:modified">{modified}</meta>',
+        *meta,
         '  </metadata>',
         '  <manifest>',
         '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
@@ -296,15 +511,11 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
         '',
     ])
 
-    nav = (
-        '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<html xmlns="http://www.w3.org/1999/xhtml" '
-        'xmlns:epub="http://www.idpf.org/2007/ops">\n'
-        f'<head><title>{title}</title></head>\n'
-        '<body><nav epub:type="toc"><ol>'
-        f'<li><a href="p0001.xhtml">{title}</a></li>'
-        '</ol></nav></body>\n</html>\n'
-    )
+    nav = ('<?xml version="1.0" encoding="utf-8"?>\n'
+           '<html xmlns="http://www.w3.org/1999/xhtml" '
+           'xmlns:epub="http://www.idpf.org/2007/ops">\n'
+           f'<head><title>{esc_title}</title></head>\n'
+           f'<body><nav epub:type="toc"><ol>{nav_items}</ol></nav></body>\n</html>\n')
 
     with _atomic(out_path) as tmp:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -315,15 +526,15 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
             z.writestr("OEBPS/content.opf", opf)
             z.writestr("OEBPS/nav.xhtml", nav)
             z.writestr("OEBPS/style.css", _EPUB_CSS)
-            for i, img in enumerate(images, start=1):
-                z.writestr(f"OEBPS/p{i:04d}.xhtml",
+            for name, body in docs:
+                z.writestr(f"OEBPS/{name}",
                            '<?xml version="1.0" encoding="utf-8"?>\n'
                            '<html xmlns="http://www.w3.org/1999/xhtml">\n'
-                           f'<head><title>{i}</title>'
+                           f'<head><title>{esc_title}</title>'
                            '<link rel="stylesheet" type="text/css" href="style.css"/>'
                            '</head>\n'
-                           f'<body><img src="img/{i:04d}.jpg" alt=""/></body>\n'
-                           '</html>\n')
+                           f'<body>{body}</body>\n</html>\n')
+            for i, img in enumerate(images, start=1):
                 im = _render(img, rotate_wide=rotate_wide, pad_aspect=pad_aspect,
                              max_width=max_width, upscale=upscale,
                              grayscale=grayscale, gamma=gamma)

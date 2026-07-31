@@ -1,9 +1,10 @@
 import io
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from PIL import Image
-from manga_panels.archive import unpack, pack
+from manga_panels.archive import unpack, pack, _EPUB_MIN_SECTION
 
 
 def _make_cbz(path: Path, n: int) -> None:
@@ -292,6 +293,32 @@ def test_epub_identifier_is_stable_across_runs(tmp_path):
     assert ids[0] == ids[1] and ids[0].startswith("urn:uuid:")
 
 
+def test_epub_identifier_is_stable_for_the_same_output_path(tmp_path):
+    out = tmp_path / "vol.epub"
+    ids = []
+    for _ in range(2):
+        pack([Image.new("RGB", (10, 10))], out, fmt="epub", title="Solo")
+        with zipfile.ZipFile(out) as z:
+            root = ET.fromstring(z.read("OEBPS/content.opf"))
+        ids.append(root.find(f".//{_DC}identifier").text)
+    assert ids[0] == ids[1]
+
+
+def test_epub_identifier_differs_across_files_sharing_a_title(tmp_path):
+    # two different archives whose ComicInfo agrees on Series but carries no
+    # Volume (common when a tagger only fills Number) resolve to the same
+    # title -- they must still get different ids, or a reader treats them as
+    # the same book and overwrites the reading position
+    ids = {}
+    for stem in ("vol01", "vol02"):
+        out = tmp_path / f"{stem}.epub"
+        pack([Image.new("RGB", (10, 10))], out, fmt="epub", title="Solo")
+        with zipfile.ZipFile(out) as z:
+            root = ET.fromstring(z.read("OEBPS/content.opf"))
+        ids[stem] = root.find(f".//{_DC}identifier").text
+    assert ids["vol01"] != ids["vol02"]
+
+
 def test_epub_applies_max_width_and_upscale(tmp_path):
     out = tmp_path / "vol.epub"
     pack([Image.new("RGB", (40, 20))], out, fmt="epub", max_width=100, upscale=True)
@@ -410,3 +437,368 @@ def test_render_chain_reaches_the_pdf_container(tmp_path):
         raw = next(iter(pdf.pages[0].get_images().values()))
         img = pikepdf.PdfImage(raw).as_pil_image()
     assert img.size == (480, 800)
+
+
+def _cbz_with_comicinfo(path, xml, n_images=3):
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ComicInfo.xml", xml)
+        for i in range(n_images):
+            buf = io.BytesIO()
+            Image.new("RGB", (10, 10)).save(buf, "PNG")
+            z.writestr(f"{i:03d}.png", buf.getvalue())
+
+
+_CI_FULL = """<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo><Series>Monster</Series><Volume>4</Volume><Writer>Naoki Urasawa</Writer>
+<Pages>
+  <Page Image="0" Type="FrontCover"/>
+  <Page Image="1" Bookmark="Kapitel 51. Richard"/>
+  <Page Image="2" Bookmark="Kapitel 52. A Prova"/>
+</Pages></ComicInfo>
+"""
+
+
+def test_read_comicinfo_returns_title_creator_and_chapters(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, _CI_FULL)
+    got = read_comicinfo(p)
+    assert got["title"] == "Monster Vol. 4"
+    assert got["creator"] == "Naoki Urasawa"
+    assert got["chapters"] == [(1, "Kapitel 51. Richard"), (2, "Kapitel 52. A Prova")]
+
+
+def test_read_comicinfo_ignores_pages_without_a_bookmark(tmp_path):
+    # the FrontCover entry has no Bookmark and must not become a chapter
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, _CI_FULL)
+    assert all(t for _, t in read_comicinfo(p)["chapters"])
+
+
+def test_read_comicinfo_without_the_file_is_empty(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    with zipfile.ZipFile(p, "w") as z:
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10)).save(buf, "PNG")
+        z.writestr("000.png", buf.getvalue())
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_with_broken_xml_is_empty(tmp_path):
+    # metadata is a nicety; a corrupt ComicInfo must never fail the run
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, "<ComicInfo><Series>oops")
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_falls_back_to_title_then_series(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, "<ComicInfo><Title>Só o título</Title></ComicInfo>")
+    assert read_comicinfo(p)["title"] == "Só o título"
+
+
+def test_read_comicinfo_chapters_are_sorted_by_image(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="5" Bookmark="B"/><Page Image="2" Bookmark="A"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(2, "A"), (5, "B")]
+
+
+def test_read_comicinfo_ties_keep_document_order(tmp_path):
+    # bug: sorting by (image, bookmark) broke ties alphabetically, so a later
+    # dedup step ("keep the first") kept whichever bookmark sorted first in the
+    # alphabet instead of whichever appeared first in the file
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="3" Bookmark="Zebra"/>'
+                           '<Page Image="3" Bookmark="Apple"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(3, "Zebra"), (3, "Apple")]
+
+
+def test_read_comicinfo_whitespace_only_bookmark_is_not_a_chapter(tmp_path):
+    # bug: the filter tested the raw attribute for truthiness, but the tuple is
+    # built with .strip() — so a whitespace-only Bookmark slipped through as an
+    # empty-title chapter instead of being ignored like "no bookmark at all"
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Series>S</Series><Pages>'
+                           '<Page Image="1" Bookmark="   "/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == []
+
+
+def test_read_comicinfo_non_decimal_unicode_digit_does_not_raise(tmp_path):
+    # bug: str.isdigit() accepts characters like superscript "²" that int()
+    # cannot parse, and that int() call sits outside the try/except — so a
+    # malformed Image attribute could raise out of a function documented to
+    # never fail on bad metadata
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="²" Bookmark="Weird"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}          # malformed entry skipped, no raise
+
+
+def test_read_comicinfo_page_without_image_attribute_is_skipped(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Bookmark="No Image attr"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_non_numeric_image_is_skipped(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="abc" Bookmark="Not a number"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_negative_image_is_kept(tmp_path):
+    # negative indices are out of scope to reject here (needs the real page
+    # count, computed by the next task) — this just pins today's behaviour
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="-1" Bookmark="Negative"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(-1, "Negative")]
+
+
+def test_read_comicinfo_duplicate_image_values_both_kept(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="3" Bookmark="First"/>'
+                           '<Page Image="3" Bookmark="Second"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(3, "First"), (3, "Second")]
+
+
+def test_read_comicinfo_nonexistent_path_is_empty():
+    from manga_panels.archive import read_comicinfo
+    assert read_comicinfo("/no/such/path/v.cbz") == {}
+
+
+def _epub_struct(tmp_path, n_images, page_starts, chapters=None, **kw):
+    out = tmp_path / "vol.epub"
+    pack([Image.new("RGB", (40, 20)) for _ in range(n_images)], out, fmt="epub",
+         page_starts=page_starts, chapters=chapters, **kw)
+    return zipfile.ZipFile(out)
+
+
+def test_epub_sections_follow_the_chapters(tmp_path):
+    starts = [(i, f"Página {i + 1}") for i in range(9)]   # spacing clears the section floor
+    z = _epub_struct(tmp_path, 9, starts, chapters=[(5, "Capítulo 2")])
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002"]           # before chapter 2, and chapter 2 on
+    assert 'src="img/0006.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
+
+
+def test_epub_without_chapters_chunks_every_20_pages(tmp_path):
+    starts = [(i, f"Página {i + 1}") for i in range(45)]
+    z = _epub_struct(tmp_path, 45, starts)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002", "s0003"]  # 45 pages -> 20 + 20 + 5
+
+
+def test_epub_closely_spaced_chapters_collapse_but_all_appear_in_nav(tmp_path):
+    # marks every 2 source pages must not reproduce the near-single-page
+    # section swarm — the very "indexing on every page turn" failure the
+    # chapter-sized section was built to avoid — but none may vanish from the toc
+    n = 40
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(i, f"Cap {i}") for i in range(0, n, 2)]      # 20 marks, 2 pages apart
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) < len(chapters)               # far fewer sections than chapter marks
+    text = z.read("OEBPS/nav.xhtml").decode()
+    for _, title in chapters:
+        assert title in text                       # every chapter still one click away
+
+
+def test_epub_chapter_not_at_a_page_start_is_dropped_not_raised(tmp_path):
+    # process_archive always aligns chapters to a page_starts entry, but pack()
+    # documents no such contract — a mark that lands mid-page (image 4, between
+    # the page-2 and page-3 starts below) must be dropped the same way the PDF
+    # packer already drops it, not raise
+    starts = [(0, "Página 1"), (3, "Página 2"), (6, "Página 3")]
+    z = _epub_struct(tmp_path, 9, starts, chapters=[(4, "Cap")])
+    text = z.read("OEBPS/nav.xhtml").decode()
+    assert "Cap" not in text
+
+
+def test_epub_normally_spaced_chapters_each_get_a_section(tmp_path):
+    # ~20 pages apart is real chapter spacing (Monster) — the floor must leave
+    # this alone, it only collapses the pathological close-spacing case above
+    n = 60
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(0, "Cap 1"), (20, "Cap 2"), (40, "Cap 3")]
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) == 3
+
+
+def test_epub_sparse_chapters_are_bounded_by_the_chunk_ceiling(tmp_path):
+    # a single mark (or metadata so out-of-range that only one mark survives
+    # process_archive's page check) must not collapse the whole book into one
+    # section -- the very "indexing never stops" failure the chunk exists to
+    # avoid for books with no chapters at all
+    from manga_panels.archive import _epub_sections, _EPUB_SECTION_CEILING
+    n = 200
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    bounds = _epub_sections(starts, [(0, "Cap 1")])
+    assert len(bounds) > 1
+    sizes = [b - a for a, b in zip(bounds, bounds[1:] + [n])]
+    assert all(s <= _EPUB_SECTION_CEILING for s in sizes)
+
+
+def test_epub_chapters_at_real_spacing_still_yield_one_section_each(tmp_path):
+    # modeled on the shipped 19-chapter volume (gaps of 22-24 source pages
+    # between marks): the chunk ceiling must not split what the floor already
+    # keeps to one section per chapter -- the validated shape must not change
+    n_chapters = 19
+    spacing = 22
+    n = n_chapters * spacing
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(i * spacing, f"Cap {i + 1}") for i in range(n_chapters)]
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) == n_chapters
+
+
+def test_epub_sections_floor_is_page_ordinal_not_image_distance(tmp_path):
+    # a source page explodes into a variable number of images (its panels), so
+    # image-index distance and page-ordinal distance are different coordinate
+    # spaces — the floor must use the latter. Six 1-image pages, then one fat
+    # page with 10 images, then six more 1-image pages:
+    #   Cap A opens on the fat page (ordinal 6, far enough from 0 to split).
+    #   Cap B opens on the very next page (ordinal 7 — 1 page later, under the
+    #     floor) but 10 images later (over the floor) — must merge with A.
+    #   Cap C opens 5 pages after A (ordinal 12 — at the floor) — must still
+    #     split, proving the fix doesn't just merge everything near the fat page.
+    fat = 10
+    counts = [1, 1, 1, 1, 1, 1, fat, 1, 1, 1, 1, 1, 1]
+    starts, idx = [], 0
+    for i, c in enumerate(counts):
+        starts.append((idx, f"Página {i + 1}"))
+        idx += c
+    n_images = idx
+    cap_a, cap_b, cap_c = starts[6][0], starts[7][0], starts[12][0]
+    assert cap_b - cap_a >= _EPUB_MIN_SECTION            # far apart in image index...
+    chapters = [(cap_a, "Capítulo A"), (cap_b, "Capítulo B"), (cap_c, "Capítulo C")]
+
+    z = _epub_struct(tmp_path, n_images, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002", "s0003"]           # B merged into A's section
+
+    # boundaries land on the correct page's first image
+    assert f'src="img/{cap_a + 1:04d}.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
+    assert f'src="img/{cap_c + 1:04d}.jpg"' in z.read("OEBPS/s0003.xhtml").decode()
+
+    ET.fromstring(z.read("OEBPS/nav.xhtml"))             # raises if the nesting broke the XML
+    nav = z.read("OEBPS/nav.xhtml").decode()
+    matches = re.findall(r'<a href="([^"]+)">(Capítulo [ABC])</a>', nav)
+    hrefs = {title: href for href, title in matches}
+    assert set(hrefs) == {"Capítulo A", "Capítulo B", "Capítulo C"}
+
+    sec_a, anchor_a = hrefs["Capítulo A"].split("#")
+    sec_b, anchor_b = hrefs["Capítulo B"].split("#")
+    sec_c, anchor_c = hrefs["Capítulo C"].split("#")
+    assert sec_a == sec_b == "s0002.xhtml"               # A and B share a section...
+    assert sec_c == "s0003.xhtml"                        # ...C does not
+    # every chapter's #pagK anchor exists in the section file its link names
+    for sec, anchor in ((sec_a, anchor_a), (sec_b, anchor_b), (sec_c, anchor_c)):
+        assert f'id="{anchor}"' in z.read(f"OEBPS/{sec}").decode()
+
+
+def test_epub_puts_an_anchor_before_every_source_page(tmp_path):
+    z = _epub_struct(tmp_path, 6, [(0, "Página 1"), (2, "Página 2"), (4, "Página 3")])
+    body = z.read("OEBPS/s0001.xhtml").decode()
+    for k in (1, 2, 3):
+        assert f'id="pag{k}"' in body
+    assert body.index('id="pag1"') < body.index('id="pag2"') < body.index('id="pag3"')
+
+
+def test_epub_nav_nests_pages_under_their_chapter(tmp_path):
+    starts = [(i, f"Página {i + 1}") for i in range(10)]  # spacing clears the section floor
+    z = _epub_struct(tmp_path, 10, starts, chapters=[(5, "Capítulo 2")])
+    nav = ET.fromstring(z.read("OEBPS/nav.xhtml"))   # raises if the nesting broke the XML
+    text = z.read("OEBPS/nav.xhtml").decode()
+    assert "Capítulo 2" in text
+    assert 's0002.xhtml#pag6' in text                # page link is an anchor, not a section
+
+
+def test_epub_nav_is_flat_without_chapters(tmp_path):
+    z = _epub_struct(tmp_path, 4, [(0, "Página 1"), (2, "Página 2")])
+    text = z.read("OEBPS/nav.xhtml").decode()
+    ET.fromstring(text)
+    assert text.count("<ol>") == 1 and "Página 2" in text
+
+
+def test_epub_uses_comicinfo_title_and_creator(tmp_path):
+    z = _epub_struct(tmp_path, 2, [(0, "Página 1")],
+                     title="Monster Vol. 4", creator="Naoki Urasawa")
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    # findtext without ".//" only checks direct children of <package>, but dc:title
+    # lives inside <metadata> (the OPF schema requires it) — same fix the existing
+    # test_epub_title_with_an_ampersand_stays_valid_xml already needed.
+    assert root.findtext(f".//{_DC}title") == "Monster Vol. 4"
+    assert root.findtext(f".//{_DC}creator") == "Naoki Urasawa"
+
+
+def test_epub_without_page_starts_keeps_one_xhtml_per_image(tmp_path):
+    out = tmp_path / "old.epub"
+    pack([Image.new("RGB", (10, 10)) for _ in range(3)], out, fmt="epub")
+    with zipfile.ZipFile(out) as z:
+        assert "OEBPS/p0003.xhtml" in z.namelist()
+
+
+def test_pdf_outline_lists_chapters_with_their_pages(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30)) for _ in range(6)], out, fmt="pdf",
+         page_starts=[(0, "Página 1"), (2, "Página 2"), (4, "Página 3")],
+         chapters=[(2, "Capítulo 2")], title="Vol. 1", creator="Autor Tal")
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert [i.title for i in ol.root] == ["Página 1", "Capítulo 2"]
+        # the chapter's own pages hang beneath it, and point at the right page
+        assert [i.title for i in ol.root[1].children] == ["Página 2", "Página 3"]
+        assert pdf.pages.index(ol.root[1].destination[0]) == 2
+        assert str(pdf.docinfo["/Title"]) == "Vol. 1"
+        assert str(pdf.docinfo["/Author"]) == "Autor Tal"
+
+
+def test_pdf_outline_is_flat_without_chapters(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30)) for _ in range(4)], out, fmt="pdf",
+         page_starts=[(0, "Página 1"), (2, "Página 2")])
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert [i.title for i in ol.root] == ["Página 1", "Página 2"]
+
+
+def test_pdf_without_page_starts_has_no_outline(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30))], out, fmt="pdf")
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert list(ol.root) == []
