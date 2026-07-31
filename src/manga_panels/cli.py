@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 
 from rich.console import Console
@@ -20,7 +21,7 @@ from manga_panels.preview import preview_archive
 _EXTS = {".cbz", ".cbr", ".zip", ".rar"}
 # screen-width presets for --device (a shortcut for --max-width)
 _DEVICES = {
-    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --split-ratio
+    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --rotate-wide/--pad-aspect
     "basic": 1072,       # Kindle basic / Kobo Clara / Boox Poke (6")
     "pw11": 1236,        # Kindle Paperwhite 11th gen (6.8")
     "paperwhite": 1264,  # Paperwhite 12th / Oasis / Kobo Libra / Boox Page (7")
@@ -30,6 +31,22 @@ _DEVICES = {
     "phone": 1080,
 }
 console = Console()
+
+
+def _aspect(text: str) -> float:
+    """'3:5' -> 0.6. An argparse type, so a bad value is rejected before anything
+    is loaded."""
+    try:
+        w, _, h = text.partition(":")
+        fw, fh = float(w), float(h)
+        # rejects NaN too (every NaN comparison is False) and +/-inf, which would
+        # otherwise slip through as a "positive number" and blow up downstream
+        if not (math.isfinite(fw) and fw > 0) or not (math.isfinite(fh) and fh > 0):
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected W:H with positive numbers (e.g. 3:5), got {text!r}") from None
+    return fw / fh
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -62,6 +79,9 @@ def _build_parser() -> argparse.ArgumentParser:
     g_out.add_argument("--upscale", action="store_true",
                        help="grow images up to --max-width too (default: only shrink; "
                             "needed on readers that never scale up, like the Xteink X4)")
+    g_out.add_argument("--pad-aspect", type=_aspect, default=None, metavar="W:H",
+                       help="pad images with white to this width:height ratio, content "
+                            "centred (e.g. 3:5 for a 480x800 screen)")
     g_out.add_argument("--preview", action="store_true",
                        help="write <stem>_preview.cbz with the panels drawn, without cropping")
     g_out.add_argument("--debug", action="store_true",
@@ -86,6 +106,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="cut panels wider than N:1 into vertical slices, read "
                             "right to left (try 1.0 on a small screen; "
                             "0 = never split; off by default)")
+    g_lay.add_argument("--rotate-wide", type=float, default=None,
+                       help="rotate panels wider than N:1 by 90 degrees clockwise, to "
+                            "read with the device turned (e.g. 1.0; 0 = never; off by default)")
     return ap
 
 
@@ -145,11 +168,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # --max-width wins; else fall back to the --device preset
     max_width = args.max_width if args.max_width is not None else _DEVICES.get(args.device)
-    # upscale lives in `common` (not just the process_archive branch) because all
-    # three archive functions call pack(); a one-sided param would make
-    # `--preview --upscale` a TypeError.
+    # upscale, rotate_wide and pad_aspect live in `common` (not just the
+    # process_archive branch) because all three archive functions call pack(); a
+    # one-sided param would make `--preview --upscale` a TypeError.
     common = dict(fmt=args.format, quality=args.quality, max_width=max_width,
-                  upscale=args.upscale)
+                  upscale=args.upscale, rotate_wide=args.rotate_wide,
+                  pad_aspect=args.pad_aspect)
     ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
     if args.debug:
         run, kw, suffix = debug_archive, common, f"_debug.{ext}"
@@ -197,6 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     # a device preset that enables splitting stays switchable from the command line.
     if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
         console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
+        return 1
+
+    if args.rotate_wide is not None and not (args.rotate_wide >= 0):   # rejects NaN too
+        console.print("[red]error:[/] --rotate-wide must be >= 0 (0 = never rotate)")
         return 1
 
     if args.format == "pdf":                    # fail fast, before loading the model

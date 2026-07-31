@@ -57,3 +57,9 @@ def test_config_accepts_upscale(tmp_path):
     cfg = tmp_path / "manga-panels.toml"
     cfg.write_text("[defaults]\nupscale = true\n")
     assert load_config(str(cfg)) == {"upscale": True}
+
+
+def test_config_accepts_the_geometry_keys(tmp_path):
+    cfg = tmp_path / "manga-panels.toml"
+    cfg.write_text("[defaults]\nrotate_wide = 1.0\npad_aspect = 0.6\n")
+    assert load_config(str(cfg)) == {"rotate_wide": 1.0, "pad_aspect": 0.6}
