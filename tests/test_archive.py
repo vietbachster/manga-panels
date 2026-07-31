@@ -481,3 +481,72 @@ def test_read_comicinfo_chapters_are_sorted_by_image(tmp_path):
                            '<Page Image="5" Bookmark="B"/><Page Image="2" Bookmark="A"/>'
                            '</Pages></ComicInfo>')
     assert read_comicinfo(p)["chapters"] == [(2, "A"), (5, "B")]
+
+
+def test_read_comicinfo_whitespace_only_bookmark_is_not_a_chapter(tmp_path):
+    # bug: the filter tested the raw attribute for truthiness, but the tuple is
+    # built with .strip() — so a whitespace-only Bookmark slipped through as an
+    # empty-title chapter instead of being ignored like "no bookmark at all"
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Series>S</Series><Pages>'
+                           '<Page Image="1" Bookmark="   "/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == []
+
+
+def test_read_comicinfo_non_decimal_unicode_digit_does_not_raise(tmp_path):
+    # bug: str.isdigit() accepts characters like superscript "²" that int()
+    # cannot parse, and that int() call sits outside the try/except — so a
+    # malformed Image attribute could raise out of a function documented to
+    # never fail on bad metadata
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="²" Bookmark="Weird"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}          # malformed entry skipped, no raise
+
+
+def test_read_comicinfo_page_without_image_attribute_is_skipped(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Bookmark="No Image attr"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_non_numeric_image_is_skipped(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="abc" Bookmark="Not a number"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_negative_image_is_kept(tmp_path):
+    # negative indices are out of scope to reject here (needs the real page
+    # count, computed by the next task) — this just pins today's behaviour
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="-1" Bookmark="Negative"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(-1, "Negative")]
+
+
+def test_read_comicinfo_duplicate_image_values_both_kept(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="3" Bookmark="First"/>'
+                           '<Page Image="3" Bookmark="Second"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(3, "First"), (3, "Second")]
+
+
+def test_read_comicinfo_nonexistent_path_is_empty():
+    from manga_panels.archive import read_comicinfo
+    assert read_comicinfo("/no/such/path/v.cbz") == {}

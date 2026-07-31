@@ -89,7 +89,8 @@ def read_comicinfo(path: str | Path) -> dict:
     chapters = sorted(
         (int(p.get("Image")), (p.get("Bookmark") or "").strip())
         for p in (pages if pages is not None else [])
-        if p.get("Bookmark") and (p.get("Image") or "").lstrip("-").isdigit()
+        if (p.get("Bookmark") or "").strip()
+        and (p.get("Image") or "").lstrip("-").isdecimal()
     )
     out = {"chapters": chapters}
     if title:
