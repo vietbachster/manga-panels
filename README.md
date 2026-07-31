@@ -182,58 +182,51 @@ dele redimensiona pro perfil de saída e assa o padding dentro da imagem. Por is
 Duas particularidades do aparelho, ambas lidas do fonte do firmware:
 
 - **Ele nunca amplia** (`if (scale > 1.0f) scale = 1.0f`). Um painel de 780px
-  encolhe pra 480 e enche a tela, mas uma fatia de `--split-ratio` (~390px) ficaria
-  pequena com sobra branca dos lados. Daí o `--upscale`.
+  encolhe pra 480 e enche a tela — mas um painel menor que a tela, girado ou não,
+  fica com sobra em branco ao redor, e é exatamente essa sobra que o `--pad-aspect`
+  deveria preencher. Sem `--upscale` a imagem nunca chega perto do tamanho da tela
+  pra começo de conversa, e o `--pad-aspect` vira decoração (números abaixo).
 - **A tela tem 4 níveis de cinza** (cache interno de 2 bits/pixel). Medindo em
-  páginas reais, `-q 80` gera arquivos 27% menores que `q 90` e só 1.1% dos pixels
-  caem num nível diferente — invisível, e é menos byte pra empurrar via WiFi pro
-  ESP32 do aparelho.
+  páginas reais, `-q 80` já gera arquivos 27% menores que `-q 90` com só 1.1% dos
+  pixels caindo num nível diferente — invisível no aparelho. Testado direto na
+  tela, dá pra ir mais fundo ainda: `-q 60` (usado na receita abaixo) também não
+  mostrou diferença perceptível nos 4 níveis de cinza, e é menos byte pra empurrar
+  pelo WiFi do ESP32.
 
 ```bash
 manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 60 \
     --rotate-wide 1.0 --pad-aspect 3:5
 ```
 
-Painel deitado fica ilegível numa tela de 480px, e cortar em fatias (`--split-ratio`)
-deixa a leitura massante — testado no aparelho. `--rotate-wide 1.0` gira o painel e
-você lê virando o X4 no sentido anti-horário: o eixo longo passa de 480 pra 728px,
-2,3x mais área.
+`--rotate-wide 1.0` gira todo painel mais largo que 1:1 e você lê virando o X4 no
+sentido anti-horário: o eixo longo passa de 480 pra 728px, 2,3x mais área.
+`--split-ratio` — cortar o painel largo em fatias verticais em vez de girar —
+segue existindo (veja a tabela de flags acima), mas pro X4 foi testado no
+aparelho e descartado: cada fatia vira uma página a mais pra virar, e a costura
+no meio da cena deixa a leitura massante. Girar preserva o painel inteiro numa
+tela só.
 
 `--pad-aspect 3:5` existe porque o firmware **centraliza só na horizontal** — sobra
 vertical deixa a imagem colada no topo. Preenchendo até a proporção da tela não sobra
 folga em eixo nenhum. Use 3:5 (a tela cheia) e não a área útil: se a barra de status
 mudar a altura, o erro sobra na horizontal, que o firmware corrige sozinho.
 
+**`--pad-aspect` sem `--upscale` não faz quase nada.** O firmware nunca amplia, então
+uma imagem pequena preenchida até 3:5 continua pequena — a folga branca só muda de
+lugar, e a metade vertical some colada no topo, o defeito exato que a flag existe
+pra resolver. Medido em 973 painéis reais com `--rotate-wide 1.0 --pad-aspect 3:5
+-w 480` **sem** `--upscale`: 758 de 973 saíram menores que a tela (197px de folga na
+mediana), e o arquivo final ficou **maior** que sem nenhuma flag de geometria (31,8 MB
+contra 28,4 MB) — só o branco extra, sem resolver o problema. Com `--upscale`:
+589/973 saem exatamente 480×800, 0px de folga na mediana, no máximo 2px de
+arredondamento. Use as duas juntas sempre.
+
 `--upscale` tem um custo que vale saber antes de esperar a transferência: painéis
-estreitos são reamostrados pra largura cheia da tela, o que engorda o JPEG. Medido
+pequenos são reamostrados pra largura cheia da tela, o que engorda o JPEG. Medido
 num volume real (FMA vol. 01, 2172 imagens de saída): 62 MB sem `--upscale` contra
-114 MB com — quase o dobro, bem mais que os 27% que o `-q 80` economiza acima. É o
-preço de não deixar as fatias renderizarem como selo postal na tela. Se o tempo de
-transferência pelo WiFi do X4 doer mais que os painéis pequenos, a alavanca é
-baixar o `-q` ainda mais, ou simplesmente deixar `--upscale` de fora.
-
-`--split-ratio 0` desliga o corte de painel largo, se quiser comparar.
-
-Em telas pequenas (o X4 tem 480px de largura e proporção 0.6) um painel deitado
-vira uma faixa ilegível. `--split-ratio 1.0` corta todo painel landscape em
-fatias verticais, na ordem de leitura, com o painel inteiro antes delas pra dar
-o contexto. As emendas desviam de balões e personagens. Comece em `1.0` e
-calibre com `--preview` — um limiar perto da proporção da tela (0.6) estilhaça
-quase tudo. Atenção: `--preview` mostra só a detecção de painel (**quais** são
-largos demais), não onde as emendas caem nem quantas fatias saem — pra isso
-compare o resultado com/sem `--split-ratio` no próprio cbz de saída.
-
-`--split-ratio` aumenta o número de imagens e o tamanho do arquivo (o painel
-inteiro **e** as fatias entram na saída). Medido num volume de 20 páginas com
-`--device x4 --grayscale`: sem split, 140 imagens / 5,7 MB; `--split-ratio 1.5`,
-240 imagens / 8,2 MB; `--split-ratio 1.0`, 400 imagens (2,9x) / 13,4 MB (2,4x).
-Note também que `--page off` só suprime a página inteira (macro) — o painel
-inteiro antes de cada conjunto de fatias continua saindo; é assim de propósito,
-pra dar contexto antes das fatias.
-
-```bash
-manga-panels capitulo.cbz --device x4 --split-ratio 1.0 --grayscale
-```
+114 MB com — quase o dobro. Se o tempo de transferência pelo WiFi do X4 doer mais
+do que vale a pena, a alavanca é baixar o `-q` ainda mais — tirar o `--upscale` não
+é opção, porque devolve o `--pad-aspect` ao quase-no-op medido acima.
 
 Pra e-ink, `--grayscale` (menor e nativo do e-paper) e `--gamma 1.8` (escurece os
 meios-tons, mais contraste) melhoram a leitura.
