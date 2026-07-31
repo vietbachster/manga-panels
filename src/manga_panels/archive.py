@@ -301,6 +301,10 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
     # level: the embedded JPEGs are never re-encoded.
     chapter_at = {i: t for i, t in (chapters or [])}
     with pikepdf.open(io.BytesIO(data)) as pdf:
+        if title:
+            pdf.docinfo["/Title"] = title
+        if creator:
+            pdf.docinfo["/Author"] = creator
         with pdf.open_outline() as ol:
             parent = None
             for idx, label in page_starts:
@@ -337,9 +341,28 @@ _EPUB_CHUNK = 20      # source pages per section when the book has no chapters
 # same "indexing" stall the chapter-sized section above exists to avoid.
 _EPUB_MIN_SECTION = 5
 
+# Ceiling on source pages between section boundaries when chapters drive them
+# — twice the chunk, not one, because a single chunk-width ceiling fires on
+# real chapters too. Monster's real marks run 20-27 source pages apart (measured
+# on the shipped volume, see test_epub_chapters_at_real_spacing_still_yield_one_
+# section_each): at a ceiling of exactly _EPUB_CHUNK, every such gap "exceeds"
+# it by a few pages, and forcing a boundary there means the *next* real mark's
+# own floor check now measures from that forced boundary instead of the true
+# previous one — an error that carries into the next gap and compounds, so a
+# steady run of ~22-page chapters ends up cutting far more than one section per
+# chapter. ponytail: a look-ahead ceiling (peek at the next mark before forcing
+# a split) would track the chunk size exactly with no slack, but this only needs
+# to turn "never bounded" into "eventually bounded" — doubling the chunk clears
+# every real gap seen so far with margin and still turns a lone or wildly
+# out-of-range mark's multi-hundred-page remainder into several sections
+# instead of one.
+_EPUB_SECTION_CEILING = _EPUB_CHUNK * 2
+
 
 def _epub_sections(page_starts, chapters):
-    """Section boundaries: the first image index of each section.
+    """Section boundaries: the first image index of each section. Assumes
+    page_starts is non-empty — the caller only calls this when there are pages
+    to split.
 
     A section is what the reader indexes when you enter it, and the size is a
     real trade-off measured on the device: one section per image stalls on every
@@ -347,22 +370,32 @@ def _epub_sections(page_starts, chapters):
     its index, which makes advancing unusable. A chapter (~20 source pages) pays
     once on entry and then flows. Without chapters, chunk at the same size.
 
+    With chapters, _EPUB_SECTION_CEILING bounds every section from above too:
+    once the gap since the last boundary reaches it, the next page opens a new
+    section even without a chapter mark there. Otherwise a lone mark — or a
+    ComicInfo that disagrees with the archive's page count, so almost every mark
+    falls outside process_archive's range check and gets dropped — reproduces
+    the single-section book that never stops indexing.
+
     A chapter within _EPUB_MIN_SECTION source pages of the previous boundary
     does not open its own section — it still appears in the table of contents
     (`_epub_nav` reads `chapters` directly, not this list), only the section
     split is skipped."""
-    if not page_starts:
-        return [0]
-    if chapters:
-        ord_of = {idx: k for k, (idx, _) in enumerate(page_starts)}  # image idx -> page ordinal
-        bounds, last_ord = [0], 0
-        for idx in sorted({i for i, _ in chapters}):
-            o = ord_of[idx]
+    if not chapters:
+        return [page_starts[k][0] for k in range(0, len(page_starts), _EPUB_CHUNK)]
+    chapter_at = {idx for idx, _ in chapters}
+    bounds, last_ord = [0], 0
+    for o, (idx, _label) in enumerate(page_starts):
+        if o == 0:
+            continue
+        if idx in chapter_at:
             if o - last_ord >= _EPUB_MIN_SECTION:
                 bounds.append(idx)
                 last_ord = o
-        return bounds
-    return [page_starts[k][0] for k in range(0, len(page_starts), _EPUB_CHUNK)]
+        elif o - last_ord >= _EPUB_SECTION_CEILING:
+            bounds.append(idx)
+            last_ord = o
+    return bounds
 
 
 def _epub_nav(starts, chapters, page_ord, sec_of) -> str:
@@ -377,13 +410,12 @@ def _epub_nav(starts, chapters, page_ord, sec_of) -> str:
     chapter_at = dict(chapters)
     out, open_chapter = [], False
     for idx, label in starts:
+        href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
         if idx in chapter_at:
             if open_chapter:
                 out.append("</ol></li>")
-            href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
             out.append(f'<li><a href="{href}">{escape(chapter_at[idx])}</a><ol>')
             open_chapter = True
-        href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
         out.append(f'<li><a href="{href}">{escape(label)}</a></li>')
     if open_chapter:
         out.append("</ol></li>")
@@ -406,19 +438,21 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
     only. No dependency: an EPUB is a zip with a fixed layout."""
     book_title = title or out_path.stem
     esc_title = escape(book_title)
-    # uuid5, not uuid4: re-processing a volume must yield the same id, or the
-    # reader treats it as a new book and drops the reading position.
-    uid = uuid.uuid5(uuid.NAMESPACE_URL, book_title)
+    # uuid5, not uuid4: re-processing the same file must yield the same id, or
+    # the reader treats it as a new book and drops the reading position. Seeded
+    # with out_path.stem too: two different archives can share a ComicInfo
+    # title (e.g. same Series, no Volume tag) and must not collide on one id.
+    uid = uuid.uuid5(uuid.NAMESPACE_URL, f"{book_title}\n{out_path.stem}")
     modified = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     starts = list(page_starts or [])
     chaps = list(chapters or [])
-    secs = _epub_sections(starts, chaps)
     # image index -> 1-based page ordinal, for the #pagK anchors
     page_ord = {idx: k for k, (idx, _) in enumerate(starts, start=1)}
 
     items, spine, docs = [], [], []
     if starts:
+        secs = _epub_sections(starts, chaps)
         sec_of = {}                       # page ordinal -> section file name
         # ponytail: _epub_sections used to pair each boundary with a title
         # ("Início" for the untitled gap before the first chapter) that nothing

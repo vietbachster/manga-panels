@@ -96,7 +96,12 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     for p, t in meta.get("chapters", []):
         if p not in page_at:
             if warn is not None:
-                warn(f"chapter {t!r} points at page {p + 1}, which this archive "
+                # p + 1 reads naturally for an out-of-range page (1-based, like
+                # every other page number in this message); a negative p is not
+                # a page at all, so name it as the raw index instead of letting
+                # "+ 1" print a misleading "page 0" for p == -1.
+                where = f"page {p + 1}" if p >= 0 else f"page index {p}"
+                warn(f"chapter {t!r} points at {where}, which this archive "
                      f"does not have ({len(pages)} pages) — skipped")
             continue
         idx = page_at[p]

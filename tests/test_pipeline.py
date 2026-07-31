@@ -706,6 +706,25 @@ def test_chapter_outside_the_volume_is_dropped_with_a_warning(tmp_path):
     assert len(said) == 1 and "Fantasma" in said[0]
 
 
+def test_negative_chapter_index_warns_coherently(tmp_path):
+    # p + 1 turns p == -1 into "page 0", which reads as 0-based right next to
+    # a message that otherwise counts pages from 1 -- a negative index must be
+    # named as what it is instead
+    import io as _io, zipfile as _zip
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="-1" Bookmark="Negative"/>'
+                   '</Pages></ComicInfo>')
+        b = _io.BytesIO(); _grid_page().save(b, "PNG")
+        z.writestr("000.png", b.getvalue())
+    said = []
+    process_archive(src, tmp_path / "out.cbz", page_pos="off", warn=said.append)
+    assert len(said) == 1
+    assert "page 0" not in said[0]
+    assert "page index -1" in said[0]
+
+
 def test_duplicate_chapter_marks_at_same_index_keep_first_with_a_warning(tmp_path, monkeypatch):
     # same philosophy as the out-of-range case above: a chapter that vanishes
     # without a signal is worse than one that is obviously wrong

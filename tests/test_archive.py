@@ -293,6 +293,32 @@ def test_epub_identifier_is_stable_across_runs(tmp_path):
     assert ids[0] == ids[1] and ids[0].startswith("urn:uuid:")
 
 
+def test_epub_identifier_is_stable_for_the_same_output_path(tmp_path):
+    out = tmp_path / "vol.epub"
+    ids = []
+    for _ in range(2):
+        pack([Image.new("RGB", (10, 10))], out, fmt="epub", title="Solo")
+        with zipfile.ZipFile(out) as z:
+            root = ET.fromstring(z.read("OEBPS/content.opf"))
+        ids.append(root.find(f".//{_DC}identifier").text)
+    assert ids[0] == ids[1]
+
+
+def test_epub_identifier_differs_across_files_sharing_a_title(tmp_path):
+    # two different archives whose ComicInfo agrees on Series but carries no
+    # Volume (common when a tagger only fills Number) resolve to the same
+    # title -- they must still get different ids, or a reader treats them as
+    # the same book and overwrites the reading position
+    ids = {}
+    for stem in ("vol01", "vol02"):
+        out = tmp_path / f"{stem}.epub"
+        pack([Image.new("RGB", (10, 10))], out, fmt="epub", title="Solo")
+        with zipfile.ZipFile(out) as z:
+            root = ET.fromstring(z.read("OEBPS/content.opf"))
+        ids[stem] = root.find(f".//{_DC}identifier").text
+    assert ids["vol01"] != ids["vol02"]
+
+
 def test_epub_applies_max_width_and_upscale(tmp_path):
     out = tmp_path / "vol.epub"
     pack([Image.new("RGB", (40, 20))], out, fmt="epub", max_width=100, upscale=True)
@@ -606,6 +632,17 @@ def test_epub_closely_spaced_chapters_collapse_but_all_appear_in_nav(tmp_path):
         assert title in text                       # every chapter still one click away
 
 
+def test_epub_chapter_not_at_a_page_start_is_dropped_not_raised(tmp_path):
+    # process_archive always aligns chapters to a page_starts entry, but pack()
+    # documents no such contract — a mark that lands mid-page (image 4, between
+    # the page-2 and page-3 starts below) must be dropped the same way the PDF
+    # packer already drops it, not raise
+    starts = [(0, "Página 1"), (3, "Página 2"), (6, "Página 3")]
+    z = _epub_struct(tmp_path, 9, starts, chapters=[(4, "Cap")])
+    text = z.read("OEBPS/nav.xhtml").decode()
+    assert "Cap" not in text
+
+
 def test_epub_normally_spaced_chapters_each_get_a_section(tmp_path):
     # ~20 pages apart is real chapter spacing (Monster) — the floor must leave
     # this alone, it only collapses the pathological close-spacing case above
@@ -616,6 +653,35 @@ def test_epub_normally_spaced_chapters_each_get_a_section(tmp_path):
     root = ET.fromstring(z.read("OEBPS/content.opf"))
     refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
     assert len(refs) == 3
+
+
+def test_epub_sparse_chapters_are_bounded_by_the_chunk_ceiling(tmp_path):
+    # a single mark (or metadata so out-of-range that only one mark survives
+    # process_archive's page check) must not collapse the whole book into one
+    # section -- the very "indexing never stops" failure the chunk exists to
+    # avoid for books with no chapters at all
+    from manga_panels.archive import _epub_sections, _EPUB_SECTION_CEILING
+    n = 200
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    bounds = _epub_sections(starts, [(0, "Cap 1")])
+    assert len(bounds) > 1
+    sizes = [b - a for a, b in zip(bounds, bounds[1:] + [n])]
+    assert all(s <= _EPUB_SECTION_CEILING for s in sizes)
+
+
+def test_epub_chapters_at_real_spacing_still_yield_one_section_each(tmp_path):
+    # modeled on the shipped 19-chapter volume (gaps of 22-24 source pages
+    # between marks): the chunk ceiling must not split what the floor already
+    # keeps to one section per chapter -- the validated shape must not change
+    n_chapters = 19
+    spacing = 22
+    n = n_chapters * spacing
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(i * spacing, f"Cap {i + 1}") for i in range(n_chapters)]
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) == n_chapters
 
 
 def test_epub_sections_floor_is_page_ordinal_not_image_distance(tmp_path):
@@ -711,12 +777,14 @@ def test_pdf_outline_lists_chapters_with_their_pages(tmp_path):
     out = tmp_path / "v.pdf"
     pack([Image.new("RGB", (20, 30)) for _ in range(6)], out, fmt="pdf",
          page_starts=[(0, "Página 1"), (2, "Página 2"), (4, "Página 3")],
-         chapters=[(2, "Capítulo 2")])
+         chapters=[(2, "Capítulo 2")], title="Vol. 1", creator="Autor Tal")
     with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
         assert [i.title for i in ol.root] == ["Página 1", "Capítulo 2"]
         # the chapter's own pages hang beneath it, and point at the right page
         assert [i.title for i in ol.root[1].children] == ["Página 2", "Página 3"]
         assert pdf.pages.index(ol.root[1].destination[0]) == 2
+        assert str(pdf.docinfo["/Title"]) == "Vol. 1"
+        assert str(pdf.docinfo["/Author"]) == "Autor Tal"
 
 
 def test_pdf_outline_is_flat_without_chapters(tmp_path):
