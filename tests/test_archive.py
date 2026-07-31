@@ -297,3 +297,70 @@ def test_epub_applies_max_width_and_upscale(tmp_path):
     pack([Image.new("RGB", (40, 20))], out, fmt="epub", max_width=100, upscale=True)
     with zipfile.ZipFile(out) as z:
         assert Image.open(io.BytesIO(z.read("OEBPS/img/0001.jpg"))).size == (100, 50)
+
+
+def test_rotate_wide_turns_a_landscape_image():
+    from manga_panels.archive import _rotate_wide
+    assert _rotate_wide(Image.new("L", (200, 100)), 1.0).size == (100, 200)
+
+
+def test_rotate_wide_leaves_a_narrow_image_alone():
+    from manga_panels.archive import _rotate_wide
+    im = Image.new("L", (200, 100))
+    assert _rotate_wide(im, 3.0) is im          # ratio 2.0 is under the 3.0 threshold
+
+
+def test_rotate_wide_is_clockwise():
+    # A wrong direction still produces a correctly-sized image, so size proves
+    # nothing. Mark the top-left corner: 90 deg clockwise sends it to the top-right.
+    from manga_panels.archive import _rotate_wide
+    im = Image.new("L", (4, 2), 255)
+    im.putpixel((0, 0), 0)
+    out = _rotate_wide(im, 1.0)
+    black = [(x, y) for y in range(out.height) for x in range(out.width)
+             if out.getpixel((x, y)) == 0]
+    assert black == [(out.width - 1, 0)]
+
+
+def test_rotate_wide_off_returns_the_same_object():
+    from manga_panels.archive import _rotate_wide
+    im = Image.new("L", (200, 100))
+    assert _rotate_wide(im, None) is im
+    assert _rotate_wide(im, 0) is im
+
+
+def test_pad_aspect_pads_height_when_image_is_too_wide():
+    from manga_panels.archive import _pad_aspect
+    assert _pad_aspect(Image.new("L", (100, 100)), 0.5).size == (100, 200)
+
+
+def test_pad_aspect_pads_width_when_image_is_too_tall():
+    from manga_panels.archive import _pad_aspect
+    assert _pad_aspect(Image.new("L", (100, 100)), 2.0).size == (200, 100)
+
+
+def test_pad_aspect_centres_the_content():
+    # the whole point: a reader that does not centre vertically must find nothing
+    # left over to mis-place
+    from manga_panels.archive import _pad_aspect
+    im = Image.new("L", (100, 100), 0)          # black content on white padding
+    out = _pad_aspect(im, 0.5)                  # -> 100x200, 50px of pad total
+    col = [out.getpixel((50, y)) for y in range(out.height)]
+    top = col.index(0)
+    bottom = out.height - 1 - col[::-1].index(0)
+    assert abs(top - (out.height - 1 - bottom)) <= 1
+
+
+def test_pad_aspect_fills_with_white_and_keeps_the_content():
+    from manga_panels.archive import _pad_aspect
+    im = Image.new("L", (100, 100), 0)
+    out = _pad_aspect(im, 0.5)
+    assert out.getpixel((50, 0)) == 255         # padding is white
+    assert out.getpixel((50, out.height // 2)) == 0   # content survived
+
+
+def test_pad_aspect_noop_returns_the_same_object():
+    from manga_panels.archive import _pad_aspect
+    im = Image.new("L", (60, 100))              # already 0.6
+    assert _pad_aspect(im, 0.6) is im
+    assert _pad_aspect(im, None) is im

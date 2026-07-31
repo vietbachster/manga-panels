@@ -100,6 +100,40 @@ def _fit(img: Image.Image, max_width: int | None, *, upscale: bool = False) -> I
     return img
 
 
+def _rotate_wide(img: Image.Image, ratio: float | None) -> Image.Image:
+    """Turn a landscape image 90° clockwise so it uses the screen's long axis;
+    the reader turns the device anticlockwise to read it. A wide panel scaled to
+    fit a narrow screen is unreadably small, and e-ink readers never rotate on
+    their own. 0 or None disables."""
+    if ratio and img.height > 0 and img.width / img.height > ratio:
+        # PIL rotates anticlockwise, so 270° anticlockwise == 90° clockwise
+        return img.transpose(Image.Transpose.ROTATE_270)
+    return img
+
+
+def _pad_aspect(img: Image.Image, aspect: float | None) -> Image.Image:
+    """Pad with white to `aspect` (width/height), content centred on both axes.
+    A reader that scales-to-fit leaves slack on one axis; one that centres
+    horizontally but not vertically then strands the image at the top of the page
+    (the Xteink X4's firmware does exactly this). Matching the screen's aspect
+    leaves no slack, so there is nothing left to mis-place. White because it is
+    the paper colour on e-ink, and flat white costs almost nothing in JPEG."""
+    if not aspect or img.width <= 0 or img.height <= 0:
+        return img
+    w, h = img.size
+    if w / h > aspect:
+        new_w, new_h = w, round(w / aspect)
+    else:
+        new_w, new_h = round(h * aspect), h
+    if (new_w, new_h) == (w, h):
+        return img
+    mode = img.mode if img.mode in ("L", "RGB") else "RGB"
+    out = Image.new(mode, (new_w, new_h), 255 if mode == "L" else (255, 255, 255))
+    out.paste(img if img.mode == mode else img.convert(mode),
+              ((new_w - w) // 2, (new_h - h) // 2))
+    return out
+
+
 def _eink(img: Image.Image, *, grayscale: bool, gamma: float) -> Image.Image:
     """e-ink tweaks: grayscale (smaller + native to e-paper) and gamma (>1 darkens
     midtones for punchier contrast; 1.0 = off)."""
