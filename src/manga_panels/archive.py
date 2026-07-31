@@ -275,6 +275,7 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
     re-encode), so no extra quality loss. For Kindle & other PDF-only readers."""
     try:
         import img2pdf
+        import pikepdf
     except ImportError as e:
         raise MissingDependency(
             "PDF output needs the [pdf] extra: uv sync --extra pdf "
@@ -290,8 +291,26 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=quality)
         jpegs.append(buf.getvalue())
-    with _atomic(out_path) as tmp:
-        tmp.write_bytes(img2pdf.convert(jpegs))
+    data = img2pdf.convert(jpegs)
+    if not page_starts:
+        with _atomic(out_path) as tmp:
+            tmp.write_bytes(data)
+        return
+    # An outline is the only navigation a PDF has. pikepdf is a hard requirement
+    # of img2pdf, so this costs no dependency, and libqpdf copies at the object
+    # level: the embedded JPEGs are never re-encoded.
+    chapter_at = {i: t for i, t in (chapters or [])}
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        with pdf.open_outline() as ol:
+            parent = None
+            for idx, label in page_starts:
+                if idx in chapter_at:
+                    parent = pikepdf.OutlineItem(chapter_at[idx], idx)
+                    ol.root.append(parent)
+                item = pikepdf.OutlineItem(label, idx)
+                (parent.children if parent is not None else ol.root).append(item)
+        with _atomic(out_path) as tmp:
+            pdf.save(tmp)
 
 
 _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>

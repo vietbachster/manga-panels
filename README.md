@@ -235,6 +235,26 @@ Os cortes já incluem os **balões que vazam** do painel e o **personagem que fa
 (o Magi detecta texto e personagens, não só o painel). Capa e splash saem inteiras
 sozinhas (≤1 painel), sem duplicar.
 
+### Capítulos
+
+Se o CBZ/CBR tiver um `ComicInfo.xml` com marcações de capítulo, elas aparecem no
+índice do EPUB e nos marcadores do PDF. O campo é o padrão do formato:
+
+```xml
+<Pages>
+  <Page Image="5"  Bookmark="Kapitel 51. Richard" />
+  <Page Image="27" Bookmark="Kapitel 52. A Prova" />
+</Pages>
+```
+
+`Image` é a posição da imagem dentro do arquivo, contada a partir de 0 — **não** o
+número impresso na página. Os dois costumam divergir: capa e miolo empurram a
+contagem, e uma página dupla guardada como uma imagem só desloca tudo dali em diante.
+Por isso a tool nunca calcula deslocamento; ela lê `Image` como está.
+
+Sem capítulos, o índice lista as páginas e o livro é dividido em blocos de 20. Nada é
+inventado: se a fonte não traz capítulo, a saída não inventa um.
+
 ## Desenvolvimento
 
 ```bash

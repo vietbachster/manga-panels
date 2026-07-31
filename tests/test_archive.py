@@ -704,3 +704,33 @@ def test_epub_without_page_starts_keeps_one_xhtml_per_image(tmp_path):
     pack([Image.new("RGB", (10, 10)) for _ in range(3)], out, fmt="epub")
     with zipfile.ZipFile(out) as z:
         assert "OEBPS/p0003.xhtml" in z.namelist()
+
+
+def test_pdf_outline_lists_chapters_with_their_pages(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30)) for _ in range(6)], out, fmt="pdf",
+         page_starts=[(0, "Página 1"), (2, "Página 2"), (4, "Página 3")],
+         chapters=[(2, "Capítulo 2")])
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert [i.title for i in ol.root] == ["Página 1", "Capítulo 2"]
+        # the chapter's own pages hang beneath it, and point at the right page
+        assert [i.title for i in ol.root[1].children] == ["Página 2", "Página 3"]
+        assert pdf.pages.index(ol.root[1].destination[0]) == 2
+
+
+def test_pdf_outline_is_flat_without_chapters(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30)) for _ in range(4)], out, fmt="pdf",
+         page_starts=[(0, "Página 1"), (2, "Página 2")])
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert [i.title for i in ol.root] == ["Página 1", "Página 2"]
+
+
+def test_pdf_without_page_starts_has_no_outline(tmp_path):
+    import pikepdf
+    out = tmp_path / "v.pdf"
+    pack([Image.new("RGB", (20, 30))], out, fmt="pdf")
+    with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
+        assert list(ol.root) == []
