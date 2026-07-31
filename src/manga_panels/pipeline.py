@@ -30,6 +30,7 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     keep_first: int = 0, grayscale: bool = False, gamma: float = 1.0,
                     cover=None, cover_crop: float | None = None, cover_side: str = "left",
                     split_ratio: float | None = None, upscale: bool = False,
+                    rotate_wide: float | None = None, pad_aspect: float | None = None,
                     on_page: Callable[[int, int], None] | None = None) -> int:
     """Explode each page into panels in a new CBZ. Returns the total number of
     images written.
@@ -77,5 +78,6 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
         if on_page is not None:
             on_page(i + 1, total)
     pack(out_imgs, out_path, fmt=fmt, quality=quality, max_width=max_width,
-         grayscale=grayscale, gamma=gamma, upscale=upscale)
+         grayscale=grayscale, gamma=gamma, upscale=upscale,
+         rotate_wide=rotate_wide, pad_aspect=pad_aspect)
     return len(out_imgs)

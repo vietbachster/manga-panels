@@ -364,3 +364,23 @@ def test_pad_aspect_noop_returns_the_same_object():
     im = Image.new("L", (60, 100))              # already 0.6
     assert _pad_aspect(im, 0.6) is im
     assert _pad_aspect(im, None) is im
+
+
+def test_render_chain_produces_a_screen_sized_image(tmp_path):
+    # the whole point, end to end: a 3:1 landscape panel becomes a 3:5 portrait
+    # image that exactly fills a 480x800 screen
+    out = tmp_path / "geo.cbz"
+    pack([Image.new("RGB", (1500, 500), (0, 0, 0))], out, fmt="png",
+         rotate_wide=1.0, pad_aspect=3 / 5, max_width=480, upscale=True)
+    assert unpack(out)[0].size == (480, 800)
+
+
+def test_render_order_rotates_before_padding(tmp_path):
+    # 400x100 with rotate 1.0 and aspect 0.5:
+    #   rotate first -> 100x400, then pad width  -> 200x400   (correct)
+    #   pad first    -> 400x800, then no rotation -> 400x800   (wrong order)
+    # The two differ, so this actually pins the order down.
+    out = tmp_path / "order.cbz"
+    pack([Image.new("RGB", (400, 100))], out, fmt="png",
+         rotate_wide=1.0, pad_aspect=0.5)
+    assert unpack(out)[0].size == (200, 400)

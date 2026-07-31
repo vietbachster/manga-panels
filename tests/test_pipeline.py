@@ -566,3 +566,30 @@ def test_cli_still_rejects_negative_and_nan_split_ratio(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--split-ratio", "-1"]) == 1
     assert main([str(src), "--split-ratio", "nan"]) == 1
+
+
+def test_cli_geometry_flags_reach_process_archive(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out, fmt=kw.get("fmt", "jpeg"))
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--rotate-wide", "1.0", "--pad-aspect", "3:5"]) == 0
+    assert captured["rotate_wide"] == 1.0
+    assert abs(captured["pad_aspect"] - 0.6) < 1e-9
+
+
+def test_cli_preview_accepts_geometry_flags(tmp_path):
+    # --preview routes to a different function; a one-sided param is a TypeError
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--preview", "--rotate-wide", "1.0", "--pad-aspect", "3:5"]) == 0
+    assert (tmp_path / "ch_preview.cbz").exists()

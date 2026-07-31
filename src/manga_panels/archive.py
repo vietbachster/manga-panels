@@ -145,6 +145,18 @@ def _eink(img: Image.Image, *, grayscale: bool, gamma: float) -> Image.Image:
     return img
 
 
+def _render(img: Image.Image, *, rotate_wide: float | None, pad_aspect: float | None,
+            max_width: int | None, upscale: bool, grayscale: bool,
+            gamma: float) -> Image.Image:
+    """The per-image transform chain every output container shares. The order is
+    load-bearing: rotate first so padding sees the final orientation, pad next so
+    the fit sizes the padded frame, then fit, then the e-ink tweaks."""
+    im = _rotate_wide(img, rotate_wide)
+    im = _pad_aspect(im, pad_aspect)
+    im = _fit(im, max_width, upscale=upscale)
+    return _eink(im, grayscale=grayscale, gamma=gamma)
+
+
 @contextmanager
 def _atomic(out_path: Path):
     """Yield a temp path; on success swap it onto out_path atomically, on any
@@ -162,16 +174,19 @@ def _atomic(out_path: Path):
 
 def pack(images: list[Image.Image], out_path: str | Path, *,
          fmt: str = "jpeg", quality: int = 90, max_width: int | None = None,
-         grayscale: bool = False, gamma: float = 1.0, upscale: bool = False) -> None:
+         grayscale: bool = False, gamma: float = 1.0, upscale: bool = False,
+         rotate_wide: float | None = None, pad_aspect: float | None = None) -> None:
     out_path = Path(out_path)
     fmt = fmt.lower()
     if fmt == "pdf":                              # a PDF file, one panel per page
         _pack_pdf(images, out_path, quality=quality, max_width=max_width,
-                  grayscale=grayscale, gamma=gamma, upscale=upscale)
+                  grayscale=grayscale, gamma=gamma, upscale=upscale,
+                  rotate_wide=rotate_wide, pad_aspect=pad_aspect)
         return
     if fmt == "epub":                             # one image per page, for epub-only readers
         _pack_epub(images, out_path, quality=quality, max_width=max_width,
-                   grayscale=grayscale, gamma=gamma, upscale=upscale)
+                   grayscale=grayscale, gamma=gamma, upscale=upscale,
+                   rotate_wide=rotate_wide, pad_aspect=pad_aspect)
         return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
@@ -186,15 +201,17 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
         with zipfile.ZipFile(tmp, "w", compression) as z:
             for i, img in enumerate(images, start=1):
                 buf = io.BytesIO()
-                im = _eink(_fit(img, max_width, upscale=upscale),
-                           grayscale=grayscale, gamma=gamma)
+                im = _render(img, rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                             max_width=max_width, upscale=upscale,
+                             grayscale=grayscale, gamma=gamma)
                 im.save(buf, pil_fmt, **save_kw)
                 z.writestr(f"{i:04d}.{ext}", buf.getvalue())
 
 
 def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
               max_width: int | None, grayscale: bool, gamma: float,
-              upscale: bool = False) -> None:
+              upscale: bool = False, rotate_wide: float | None = None,
+              pad_aspect: float | None = None) -> None:
     """Embed each panel as a PDF page. img2pdf stores the JPEG bytes as-is (no
     re-encode), so no extra quality loss. For Kindle & other PDF-only readers."""
     try:
@@ -206,7 +223,9 @@ def _pack_pdf(images: list[Image.Image], out_path: Path, *, quality: int,
         ) from e
     jpegs = []
     for img in images:
-        im = _eink(_fit(img, max_width, upscale=upscale), grayscale=grayscale, gamma=gamma)
+        im = _render(img, rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                     max_width=max_width, upscale=upscale,
+                     grayscale=grayscale, gamma=gamma)
         if im.mode not in ("L", "RGB"):
             im = im.convert("RGB")
         buf = io.BytesIO()
@@ -233,7 +252,8 @@ _EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
 
 def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                max_width: int | None, grayscale: bool, gamma: float,
-               upscale: bool = False) -> None:
+               upscale: bool = False, rotate_wide: float | None = None,
+               pad_aspect: float | None = None) -> None:
     """Write an EPUB 3 with one image per page, right-to-left (manga order).
     For readers that take neither CBZ nor PDF — the Xteink X4 reads epub/txt/bmp
     only. No dependency: an EPUB is a zip with a fixed layout, and pack() already
@@ -304,8 +324,9 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                            '</head>\n'
                            f'<body><img src="img/{i:04d}.jpg" alt=""/></body>\n'
                            '</html>\n')
-                im = _eink(_fit(img, max_width, upscale=upscale),
-                           grayscale=grayscale, gamma=gamma)
+                im = _render(img, rotate_wide=rotate_wide, pad_aspect=pad_aspect,
+                             max_width=max_width, upscale=upscale,
+                             grayscale=grayscale, gamma=gamma)
                 if im.mode not in ("L", "RGB"):
                     im = im.convert("RGB")
                 buf = io.BytesIO()
