@@ -384,3 +384,29 @@ def test_render_order_rotates_before_padding(tmp_path):
     pack([Image.new("RGB", (400, 100))], out, fmt="png",
          rotate_wide=1.0, pad_aspect=0.5)
     assert unpack(out)[0].size == (200, 400)
+
+
+def test_render_chain_reaches_the_epub_container(tmp_path):
+    # regression: _pack_epub must forward rotate_wide/pad_aspect into _render,
+    # same as the cbz path above — nothing else exercises this
+    out = tmp_path / "geo.epub"
+    pack([Image.new("RGB", (1500, 500), (0, 0, 0))], out, fmt="epub",
+         rotate_wide=1.0, pad_aspect=3 / 5, max_width=480, upscale=True)
+    with zipfile.ZipFile(out) as z:
+        img = Image.open(io.BytesIO(z.read("OEBPS/img/0001.jpg")))
+    assert img.size == (480, 800)
+
+
+def test_render_chain_reaches_the_pdf_container(tmp_path):
+    # regression: _pack_pdf must forward rotate_wide/pad_aspect into _render too
+    import pytest
+    pytest.importorskip("img2pdf")
+    import pikepdf
+
+    out = tmp_path / "geo.pdf"
+    pack([Image.new("RGB", (1500, 500), (0, 0, 0))], out, fmt="pdf",
+         rotate_wide=1.0, pad_aspect=3 / 5, max_width=480, upscale=True)
+    with pikepdf.open(out) as pdf:
+        raw = next(iter(pdf.pages[0].get_images().values()))
+        img = pikepdf.PdfImage(raw).as_pil_image()
+    assert img.size == (480, 800)

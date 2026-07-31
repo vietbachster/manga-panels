@@ -38,7 +38,7 @@ def _aspect(text: str) -> float:
     try:
         w, _, h = text.partition(":")
         fw, fh = float(w), float(h)
-        if fw <= 0 or fh <= 0:
+        if not (fw > 0) or not (fh > 0):   # rejects NaN too (every NaN comparison is False)
             raise ValueError
     except ValueError:
         raise argparse.ArgumentTypeError(

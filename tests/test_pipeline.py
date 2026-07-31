@@ -600,7 +600,7 @@ def test_cli_rejects_a_bad_pad_aspect(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
     pack([_grid_page()], src)
-    for bad in ("3x5", "0:5", "5:0", "abc"):
+    for bad in ("3x5", "0:5", "5:0", "abc", "nan:5", "5:nan"):
         with pytest.raises(SystemExit) as e:      # argparse type error
             main([str(src), "--pad-aspect", bad])
         assert e.value.code == 2
