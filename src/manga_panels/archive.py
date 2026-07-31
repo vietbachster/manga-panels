@@ -4,6 +4,7 @@ import io
 import os
 import re
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 import zlib
 from contextlib import contextmanager
@@ -56,6 +57,46 @@ def load_image(path: str | Path) -> Image.Image:
     except OSError as e:
         raise BadArchive(f"cannot read image {path}: {e}") from e
     return _load(data)
+
+
+def read_comicinfo(path: str | Path) -> dict:
+    """Title, creator and chapter marks from a ComicInfo.xml inside the archive.
+    Chapters come from Page/@Bookmark — the standard field, so anything that
+    writes ComicInfo can supply them and we invent no format of our own.
+
+    Indices are read straight from Page/@Image and never derived from printed
+    page numbers: a double-page spread stored as one image shifts the count
+    mid-volume, so any fixed offset silently misplaces every later chapter.
+
+    Metadata is a nicety, never a reason to fail: an absent, unreadable or
+    malformed ComicInfo yields {}."""
+    try:
+        with zipfile.ZipFile(path) as z:
+            name = next((n for n in z.namelist()
+                         if n.lower().endswith("comicinfo.xml")), None)
+            if name is None:
+                return {}
+            root = ET.fromstring(z.read(name))
+    except Exception:                       # ponytail: any failure here means "no metadata"
+        return {}
+
+    def text(tag: str) -> str:
+        return (root.findtext(tag) or "").strip()
+
+    series, volume = text("Series"), text("Volume")
+    title = f"{series} Vol. {volume}" if series and volume else series or text("Title")
+    pages = root.find("Pages")
+    chapters = sorted(
+        (int(p.get("Image")), (p.get("Bookmark") or "").strip())
+        for p in (pages if pages is not None else [])
+        if p.get("Bookmark") and (p.get("Image") or "").lstrip("-").isdigit()
+    )
+    out = {"chapters": chapters}
+    if title:
+        out["title"] = title
+    if text("Writer"):
+        out["creator"] = text("Writer")
+    return out if (title or chapters or out.get("creator")) else {}
 
 
 def _unpack_zip(path: Path) -> list[Image.Image]:

@@ -410,3 +410,74 @@ def test_render_chain_reaches_the_pdf_container(tmp_path):
         raw = next(iter(pdf.pages[0].get_images().values()))
         img = pikepdf.PdfImage(raw).as_pil_image()
     assert img.size == (480, 800)
+
+
+def _cbz_with_comicinfo(path, xml, n_images=3):
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ComicInfo.xml", xml)
+        for i in range(n_images):
+            buf = io.BytesIO()
+            Image.new("RGB", (10, 10)).save(buf, "PNG")
+            z.writestr(f"{i:03d}.png", buf.getvalue())
+
+
+_CI_FULL = """<?xml version="1.0" encoding="utf-8"?>
+<ComicInfo><Series>Monster</Series><Volume>4</Volume><Writer>Naoki Urasawa</Writer>
+<Pages>
+  <Page Image="0" Type="FrontCover"/>
+  <Page Image="1" Bookmark="Kapitel 51. Richard"/>
+  <Page Image="2" Bookmark="Kapitel 52. A Prova"/>
+</Pages></ComicInfo>
+"""
+
+
+def test_read_comicinfo_returns_title_creator_and_chapters(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, _CI_FULL)
+    got = read_comicinfo(p)
+    assert got["title"] == "Monster Vol. 4"
+    assert got["creator"] == "Naoki Urasawa"
+    assert got["chapters"] == [(1, "Kapitel 51. Richard"), (2, "Kapitel 52. A Prova")]
+
+
+def test_read_comicinfo_ignores_pages_without_a_bookmark(tmp_path):
+    # the FrontCover entry has no Bookmark and must not become a chapter
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, _CI_FULL)
+    assert all(t for _, t in read_comicinfo(p)["chapters"])
+
+
+def test_read_comicinfo_without_the_file_is_empty(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    with zipfile.ZipFile(p, "w") as z:
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10)).save(buf, "PNG")
+        z.writestr("000.png", buf.getvalue())
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_with_broken_xml_is_empty(tmp_path):
+    # metadata is a nicety; a corrupt ComicInfo must never fail the run
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, "<ComicInfo><Series>oops")
+    assert read_comicinfo(p) == {}
+
+
+def test_read_comicinfo_falls_back_to_title_then_series(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, "<ComicInfo><Title>Só o título</Title></ComicInfo>")
+    assert read_comicinfo(p)["title"] == "Só o título"
+
+
+def test_read_comicinfo_chapters_are_sorted_by_image(tmp_path):
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="5" Bookmark="B"/><Page Image="2" Bookmark="A"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(2, "A"), (5, "B")]
