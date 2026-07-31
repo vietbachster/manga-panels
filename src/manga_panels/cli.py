@@ -32,6 +32,20 @@ _DEVICES = {
 console = Console()
 
 
+def _aspect(text: str) -> float:
+    """'3:5' -> 0.6. An argparse type, so a bad value is rejected before anything
+    is loaded."""
+    try:
+        w, _, h = text.partition(":")
+        fw, fh = float(w), float(h)
+        if fw <= 0 or fh <= 0:
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"expected W:H with positive numbers (e.g. 3:5), got {text!r}") from None
+    return fw / fh
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="manga-panels",
@@ -62,6 +76,9 @@ def _build_parser() -> argparse.ArgumentParser:
     g_out.add_argument("--upscale", action="store_true",
                        help="grow images up to --max-width too (default: only shrink; "
                             "needed on readers that never scale up, like the Xteink X4)")
+    g_out.add_argument("--pad-aspect", type=_aspect, default=None, metavar="W:H",
+                       help="pad images with white to this width:height ratio, content "
+                            "centred (e.g. 3:5 for a 480x800 screen)")
     g_out.add_argument("--preview", action="store_true",
                        help="write <stem>_preview.cbz with the panels drawn, without cropping")
     g_out.add_argument("--debug", action="store_true",
@@ -86,6 +103,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="cut panels wider than N:1 into vertical slices, read "
                             "right to left (try 1.0 on a small screen; "
                             "0 = never split; off by default)")
+    g_lay.add_argument("--rotate-wide", type=float, default=None,
+                       help="rotate panels wider than N:1 by 90 degrees clockwise, to "
+                            "read with the device turned (e.g. 1.0; 0 = never; off by default)")
     return ap
 
 
@@ -145,11 +165,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # --max-width wins; else fall back to the --device preset
     max_width = args.max_width if args.max_width is not None else _DEVICES.get(args.device)
-    # upscale lives in `common` (not just the process_archive branch) because all
-    # three archive functions call pack(); a one-sided param would make
-    # `--preview --upscale` a TypeError.
+    # upscale, rotate_wide and pad_aspect live in `common` (not just the
+    # process_archive branch) because all three archive functions call pack(); a
+    # one-sided param would make `--preview --upscale` a TypeError.
     common = dict(fmt=args.format, quality=args.quality, max_width=max_width,
-                  upscale=args.upscale)
+                  upscale=args.upscale, rotate_wide=args.rotate_wide,
+                  pad_aspect=args.pad_aspect)
     ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
     if args.debug:
         run, kw, suffix = debug_archive, common, f"_debug.{ext}"
@@ -197,6 +218,10 @@ def main(argv: list[str] | None = None) -> int:
     # a device preset that enables splitting stays switchable from the command line.
     if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
         console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
+        return 1
+
+    if args.rotate_wide is not None and not (args.rotate_wide >= 0):   # rejects NaN too
+        console.print("[red]error:[/] --rotate-wide must be >= 0 (0 = never rotate)")
         return 1
 
     if args.format == "pdf":                    # fail fast, before loading the model

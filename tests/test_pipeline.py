@@ -593,3 +593,22 @@ def test_cli_preview_accepts_geometry_flags(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--preview", "--rotate-wide", "1.0", "--pad-aspect", "3:5"]) == 0
     assert (tmp_path / "ch_preview.cbz").exists()
+
+
+def test_cli_rejects_a_bad_pad_aspect(tmp_path):
+    import pytest
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    for bad in ("3x5", "0:5", "5:0", "abc"):
+        with pytest.raises(SystemExit) as e:      # argparse type error
+            main([str(src), "--pad-aspect", bad])
+        assert e.value.code == 2
+
+
+def test_cli_rejects_a_negative_rotate_wide(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--rotate-wide", "-1"]) == 1
+    assert main([str(src), "--rotate-wide", "nan"]) == 1

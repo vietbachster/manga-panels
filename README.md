@@ -112,6 +112,8 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 | `--gamma 1.8` | escurece os meios-tons pro e-ink (mais contraste; `1.0` = off) |
 | `--format epub` | gera um `.epub` (uma imagem por página, ordem RTL) — pra leitores que não abrem cbz nem pdf |
 | `--upscale` | também **amplia** imagens até `--max-width` (default só encolhe) |
+| `--rotate-wide 1.0` | gira 90° (horário) painel mais largo que N:1, pra ler virando o aparelho; `0` = nunca |
+| `--pad-aspect 3:5` | preenche com branco até essa proporção, conteúdo centralizado |
 | `--page before\|after\|off` | onde entra a página inteira (macro) — default `before` |
 | `--split-ratio 1.0` | corta painel mais largo que N:1 em fatias verticais (direita→esquerda); o painel inteiro sai antes das fatias |
 | `--keep-first N` | mantém as N primeiras páginas inteiras (capa/miolo) |
@@ -188,8 +190,19 @@ Duas particularidades do aparelho, ambas lidas do fonte do firmware:
   ESP32 do aparelho.
 
 ```bash
-manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 80 --split-ratio 1.0
+manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 60 \
+    --rotate-wide 1.0 --pad-aspect 3:5
 ```
+
+Painel deitado fica ilegível numa tela de 480px, e cortar em fatias (`--split-ratio`)
+deixa a leitura massante — testado no aparelho. `--rotate-wide 1.0` gira o painel e
+você lê virando o X4 no sentido anti-horário: o eixo longo passa de 480 pra 728px,
+2,3x mais área.
+
+`--pad-aspect 3:5` existe porque o firmware **centraliza só na horizontal** — sobra
+vertical deixa a imagem colada no topo. Preenchendo até a proporção da tela não sobra
+folga em eixo nenhum. Use 3:5 (a tela cheia) e não a área útil: se a barra de status
+mudar a altura, o erro sobra na horizontal, que o firmware corrige sozinho.
 
 `--upscale` tem um custo que vale saber antes de esperar a transferência: painéis
 estreitos são reamostrados pra largura cheia da tela, o que engorda o JPEG. Medido
