@@ -302,6 +302,51 @@ _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 _EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
 
 
+_EPUB_CHUNK = 20      # source pages per section when the book has no chapters
+
+
+def _epub_sections(page_starts, chapters):
+    """Section boundaries as (first image index, title).
+
+    A section is what the reader indexes when you enter it, and the size is a
+    real trade-off measured on the device: one section per image stalls on every
+    page turn, and a single section for the whole volume never stops extending
+    its index, which makes advancing unusable. A chapter (~20 source pages) pays
+    once on entry and then flows. Without chapters, chunk at the same size."""
+    if not page_starts:
+        return [(0, "")]
+    if chapters:
+        titles = {i: t for i, t in chapters}
+        bounds = sorted({0, *titles})
+        return [(b, titles.get(b, "Início")) for b in bounds]
+    return [page_starts[k] for k in range(0, len(page_starts), _EPUB_CHUNK)]
+
+
+def _epub_nav(starts, chapters, page_ord, sec_of) -> str:
+    """Nested table of contents: chapters at the top level, their pages beneath.
+    Page entries point at an anchor inside the section rather than at a section of
+    their own — that is what lets a section stay chapter-sized while the reader
+    can still jump to a single page.
+
+    Reads `chapters`, not the section titles: without chapters the sections are
+    named after their first page, and nesting those would turn every twentieth
+    page into a fake chapter."""
+    chapter_at = dict(chapters)
+    out, open_chapter = [], False
+    for idx, label in starts:
+        if idx in chapter_at:
+            if open_chapter:
+                out.append("</ol></li>")
+            href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
+            out.append(f'<li><a href="{href}">{escape(chapter_at[idx])}</a><ol>')
+            open_chapter = True
+        href = f"{sec_of[page_ord[idx]]}#pag{page_ord[idx]}"
+        out.append(f'<li><a href="{href}">{escape(label)}</a></li>')
+    if open_chapter:
+        out.append("</ol></li>")
+    return "".join(out)
+
+
 def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                max_width: int | None, grayscale: bool, gamma: float,
                upscale: bool = False, rotate_wide: float | None = None,
@@ -309,34 +354,69 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                page_starts: list[tuple[int, str]] | None = None,
                chapters: list[tuple[int, str]] | None = None,
                title: str | None = None, creator: str | None = None) -> None:
-    """Write an EPUB 3 with one image per page, right-to-left (manga order).
+    """Write an EPUB 3, right-to-left (manga order). With `page_starts` the book
+    is split into chapter-sized sections with an anchor at every source page, so
+    the table of contents navigates by real manga page instead of by panel;
+    without it, one image per document (the original shape).
+
     For readers that take neither CBZ nor PDF — the Xteink X4 reads epub/txt/bmp
-    only. No dependency: an EPUB is a zip with a fixed layout, and pack() already
-    writes zips atomically."""
-    title = escape(out_path.stem)
+    only. No dependency: an EPUB is a zip with a fixed layout."""
+    book_title = title or out_path.stem
+    esc_title = escape(book_title)
     # uuid5, not uuid4: re-processing a volume must yield the same id, or the
     # reader treats it as a new book and drops the reading position.
-    uid = uuid.uuid5(uuid.NAMESPACE_URL, out_path.stem)
+    uid = uuid.uuid5(uuid.NAMESPACE_URL, book_title)
     modified = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    items, spine = [], []
+    starts = list(page_starts or [])
+    chaps = list(chapters or [])
+    secs = _epub_sections(starts, chaps)
+    # image index -> 1-based page ordinal, for the #pagK anchors
+    page_ord = {idx: k for k, (idx, _) in enumerate(starts, start=1)}
+
+    items, spine, docs = [], [], []
+    if starts:
+        sec_of = {}                       # page ordinal -> section file name
+        for si, (first, _) in enumerate(secs, start=1):
+            last = secs[si][0] if si < len(secs) else len(images)
+            name = f"s{si:04d}.xhtml"
+            body = []
+            for j in range(first, last):
+                if j in page_ord:
+                    body.append(f'<a id="pag{page_ord[j]}"></a>')
+                    sec_of[page_ord[j]] = name
+                body.append(f'<img src="img/{j + 1:04d}.jpg" alt=""/>')
+            docs.append((name, "".join(body)))
+            items.append(f'    <item id="s{si:04d}" href="{name}" '
+                         f'media-type="application/xhtml+xml"/>')
+            spine.append(f'    <itemref idref="s{si:04d}"/>')
+        nav_items = _epub_nav(starts, chaps, page_ord, sec_of)
+    else:
+        for i in range(1, len(images) + 1):
+            docs.append((f"p{i:04d}.xhtml", f'<img src="img/{i:04d}.jpg" alt=""/>'))
+            items.append(f'    <item id="p{i:04d}" href="p{i:04d}.xhtml" '
+                         f'media-type="application/xhtml+xml"/>')
+            spine.append(f'    <itemref idref="p{i:04d}"/>')
+        nav_items = f'<li><a href="p0001.xhtml">{esc_title}</a></li>'
+
     for i in range(1, len(images) + 1):
         cover = ' properties="cover-image"' if i == 1 else ""
         items.append(f'    <item id="img{i:04d}" href="img/{i:04d}.jpg" '
                      f'media-type="image/jpeg"{cover}/>')
-        items.append(f'    <item id="p{i:04d}" href="p{i:04d}.xhtml" '
-                     f'media-type="application/xhtml+xml"/>')
-        spine.append(f'    <itemref idref="p{i:04d}"/>')
+
+    meta = [f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>',
+            f'    <dc:title>{esc_title}</dc:title>']
+    if creator:
+        meta.append(f'    <dc:creator>{escape(creator)}</dc:creator>')
+    meta += ['    <dc:language>en</dc:language>',
+             f'    <meta property="dcterms:modified">{modified}</meta>']
 
     opf = "\n".join([
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
         'unique-identifier="bookid">',
         '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
-        f'    <dc:identifier id="bookid">urn:uuid:{uid}</dc:identifier>',
-        f'    <dc:title>{title}</dc:title>',
-        '    <dc:language>en</dc:language>',
-        f'    <meta property="dcterms:modified">{modified}</meta>',
+        *meta,
         '  </metadata>',
         '  <manifest>',
         '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
@@ -351,15 +431,11 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
         '',
     ])
 
-    nav = (
-        '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<html xmlns="http://www.w3.org/1999/xhtml" '
-        'xmlns:epub="http://www.idpf.org/2007/ops">\n'
-        f'<head><title>{title}</title></head>\n'
-        '<body><nav epub:type="toc"><ol>'
-        f'<li><a href="p0001.xhtml">{title}</a></li>'
-        '</ol></nav></body>\n</html>\n'
-    )
+    nav = ('<?xml version="1.0" encoding="utf-8"?>\n'
+           '<html xmlns="http://www.w3.org/1999/xhtml" '
+           'xmlns:epub="http://www.idpf.org/2007/ops">\n'
+           f'<head><title>{esc_title}</title></head>\n'
+           f'<body><nav epub:type="toc"><ol>{nav_items}</ol></nav></body>\n</html>\n')
 
     with _atomic(out_path) as tmp:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
@@ -370,15 +446,15 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
             z.writestr("OEBPS/content.opf", opf)
             z.writestr("OEBPS/nav.xhtml", nav)
             z.writestr("OEBPS/style.css", _EPUB_CSS)
-            for i, img in enumerate(images, start=1):
-                z.writestr(f"OEBPS/p{i:04d}.xhtml",
+            for name, body in docs:
+                z.writestr(f"OEBPS/{name}",
                            '<?xml version="1.0" encoding="utf-8"?>\n'
                            '<html xmlns="http://www.w3.org/1999/xhtml">\n'
-                           f'<head><title>{i}</title>'
+                           f'<head><title>{esc_title}</title>'
                            '<link rel="stylesheet" type="text/css" href="style.css"/>'
                            '</head>\n'
-                           f'<body><img src="img/{i:04d}.jpg" alt=""/></body>\n'
-                           '</html>\n')
+                           f'<body>{body}</body>\n</html>\n')
+            for i, img in enumerate(images, start=1):
                 im = _render(img, rotate_wide=rotate_wide, pad_aspect=pad_aspect,
                              max_width=max_width, upscale=upscale,
                              grayscale=grayscale, gamma=gamma)

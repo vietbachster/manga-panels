@@ -550,3 +550,70 @@ def test_read_comicinfo_duplicate_image_values_both_kept(tmp_path):
 def test_read_comicinfo_nonexistent_path_is_empty():
     from manga_panels.archive import read_comicinfo
     assert read_comicinfo("/no/such/path/v.cbz") == {}
+
+
+def _epub_struct(tmp_path, n_images, page_starts, chapters=None, **kw):
+    out = tmp_path / "vol.epub"
+    pack([Image.new("RGB", (40, 20)) for _ in range(n_images)], out, fmt="epub",
+         page_starts=page_starts, chapters=chapters, **kw)
+    return zipfile.ZipFile(out)
+
+
+def test_epub_sections_follow_the_chapters(tmp_path):
+    z = _epub_struct(tmp_path, 9,
+                     [(0, "Página 1"), (3, "Página 2"), (6, "Página 3")],
+                     chapters=[(3, "Capítulo 2")])
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002"]           # before chapter 2, and chapter 2 on
+    assert 'src="img/0004.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
+
+
+def test_epub_without_chapters_chunks_every_20_pages(tmp_path):
+    starts = [(i, f"Página {i + 1}") for i in range(45)]
+    z = _epub_struct(tmp_path, 45, starts)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002", "s0003"]  # 45 pages -> 20 + 20 + 5
+
+
+def test_epub_puts_an_anchor_before_every_source_page(tmp_path):
+    z = _epub_struct(tmp_path, 6, [(0, "Página 1"), (2, "Página 2"), (4, "Página 3")])
+    body = z.read("OEBPS/s0001.xhtml").decode()
+    for k in (1, 2, 3):
+        assert f'id="pag{k}"' in body
+    assert body.index('id="pag1"') < body.index('id="pag2"') < body.index('id="pag3"')
+
+
+def test_epub_nav_nests_pages_under_their_chapter(tmp_path):
+    z = _epub_struct(tmp_path, 6, [(0, "Página 1"), (2, "Página 2"), (4, "Página 3")],
+                     chapters=[(2, "Capítulo 2")])
+    nav = ET.fromstring(z.read("OEBPS/nav.xhtml"))   # raises if the nesting broke the XML
+    text = z.read("OEBPS/nav.xhtml").decode()
+    assert "Capítulo 2" in text
+    assert 's0002.xhtml#pag2' in text                # page link is an anchor, not a section
+
+
+def test_epub_nav_is_flat_without_chapters(tmp_path):
+    z = _epub_struct(tmp_path, 4, [(0, "Página 1"), (2, "Página 2")])
+    text = z.read("OEBPS/nav.xhtml").decode()
+    ET.fromstring(text)
+    assert text.count("<ol>") == 1 and "Página 2" in text
+
+
+def test_epub_uses_comicinfo_title_and_creator(tmp_path):
+    z = _epub_struct(tmp_path, 2, [(0, "Página 1")],
+                     title="Monster Vol. 4", creator="Naoki Urasawa")
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    # findtext without ".//" only checks direct children of <package>, but dc:title
+    # lives inside <metadata> (the OPF schema requires it) — same fix the existing
+    # test_epub_title_with_an_ampersand_stays_valid_xml already needed.
+    assert root.findtext(f".//{_DC}title") == "Monster Vol. 4"
+    assert root.findtext(f".//{_DC}creator") == "Naoki Urasawa"
+
+
+def test_epub_without_page_starts_keeps_one_xhtml_per_image(tmp_path):
+    out = tmp_path / "old.epub"
+    pack([Image.new("RGB", (10, 10)) for _ in range(3)], out, fmt="epub")
+    with zipfile.ZipFile(out) as z:
+        assert "OEBPS/p0003.xhtml" in z.namelist()
