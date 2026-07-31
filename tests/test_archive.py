@@ -560,13 +560,12 @@ def _epub_struct(tmp_path, n_images, page_starts, chapters=None, **kw):
 
 
 def test_epub_sections_follow_the_chapters(tmp_path):
-    z = _epub_struct(tmp_path, 9,
-                     [(0, "Página 1"), (3, "Página 2"), (6, "Página 3")],
-                     chapters=[(3, "Capítulo 2")])
+    starts = [(i, f"Página {i + 1}") for i in range(9)]   # spacing clears the section floor
+    z = _epub_struct(tmp_path, 9, starts, chapters=[(5, "Capítulo 2")])
     root = ET.fromstring(z.read("OEBPS/content.opf"))
     refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
     assert refs == ["s0001", "s0002"]           # before chapter 2, and chapter 2 on
-    assert 'src="img/0004.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
+    assert 'src="img/0006.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
 
 
 def test_epub_without_chapters_chunks_every_20_pages(tmp_path):
@@ -575,6 +574,34 @@ def test_epub_without_chapters_chunks_every_20_pages(tmp_path):
     root = ET.fromstring(z.read("OEBPS/content.opf"))
     refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
     assert refs == ["s0001", "s0002", "s0003"]  # 45 pages -> 20 + 20 + 5
+
+
+def test_epub_closely_spaced_chapters_collapse_but_all_appear_in_nav(tmp_path):
+    # marks every 2 source pages must not reproduce the near-single-page
+    # section swarm — the very "indexing on every page turn" failure the
+    # chapter-sized section was built to avoid — but none may vanish from the toc
+    n = 40
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(i, f"Cap {i}") for i in range(0, n, 2)]      # 20 marks, 2 pages apart
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) < len(chapters)               # far fewer sections than chapter marks
+    text = z.read("OEBPS/nav.xhtml").decode()
+    for _, title in chapters:
+        assert title in text                       # every chapter still one click away
+
+
+def test_epub_normally_spaced_chapters_each_get_a_section(tmp_path):
+    # ~20 pages apart is real chapter spacing (Monster) — the floor must leave
+    # this alone, it only collapses the pathological close-spacing case above
+    n = 60
+    starts = [(i, f"Página {i + 1}") for i in range(n)]
+    chapters = [(0, "Cap 1"), (20, "Cap 2"), (40, "Cap 3")]
+    z = _epub_struct(tmp_path, n, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert len(refs) == 3
 
 
 def test_epub_puts_an_anchor_before_every_source_page(tmp_path):
@@ -586,12 +613,12 @@ def test_epub_puts_an_anchor_before_every_source_page(tmp_path):
 
 
 def test_epub_nav_nests_pages_under_their_chapter(tmp_path):
-    z = _epub_struct(tmp_path, 6, [(0, "Página 1"), (2, "Página 2"), (4, "Página 3")],
-                     chapters=[(2, "Capítulo 2")])
+    starts = [(i, f"Página {i + 1}") for i in range(10)]  # spacing clears the section floor
+    z = _epub_struct(tmp_path, 10, starts, chapters=[(5, "Capítulo 2")])
     nav = ET.fromstring(z.read("OEBPS/nav.xhtml"))   # raises if the nesting broke the XML
     text = z.read("OEBPS/nav.xhtml").decode()
     assert "Capítulo 2" in text
-    assert 's0002.xhtml#pag2' in text                # page link is an anchor, not a section
+    assert 's0002.xhtml#pag6' in text                # page link is an anchor, not a section
 
 
 def test_epub_nav_is_flat_without_chapters(tmp_path):

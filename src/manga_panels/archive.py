@@ -304,22 +304,39 @@ _EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
 
 _EPUB_CHUNK = 20      # source pages per section when the book has no chapters
 
+# Floor on source pages between section boundaries when chapters drive them.
+# Below a real chapter (Monster's are ~20 source pages) but high enough that
+# crossing sections stays rare. Without it, a ComicInfo that bookmarks scene
+# breaks or extras every couple of pages reproduces — on every page turn — the
+# same "indexing" stall the chapter-sized section above exists to avoid.
+_EPUB_MIN_SECTION = 5
+
 
 def _epub_sections(page_starts, chapters):
-    """Section boundaries as (first image index, title).
+    """Section boundaries: the first image index of each section.
 
     A section is what the reader indexes when you enter it, and the size is a
     real trade-off measured on the device: one section per image stalls on every
     page turn, and a single section for the whole volume never stops extending
     its index, which makes advancing unusable. A chapter (~20 source pages) pays
-    once on entry and then flows. Without chapters, chunk at the same size."""
+    once on entry and then flows. Without chapters, chunk at the same size.
+
+    A chapter within _EPUB_MIN_SECTION source pages of the previous boundary
+    does not open its own section — it still appears in the table of contents
+    (`_epub_nav` reads `chapters` directly, not this list), only the section
+    split is skipped."""
     if not page_starts:
-        return [(0, "")]
+        return [0]
     if chapters:
-        titles = {i: t for i, t in chapters}
-        bounds = sorted({0, *titles})
-        return [(b, titles.get(b, "Início")) for b in bounds]
-    return [page_starts[k] for k in range(0, len(page_starts), _EPUB_CHUNK)]
+        ord_of = {idx: k for k, (idx, _) in enumerate(page_starts)}  # image idx -> page ordinal
+        bounds, last_ord = [0], 0
+        for idx in sorted({i for i, _ in chapters}):
+            o = ord_of[idx]
+            if o - last_ord >= _EPUB_MIN_SECTION:
+                bounds.append(idx)
+                last_ord = o
+        return bounds
+    return [page_starts[k][0] for k in range(0, len(page_starts), _EPUB_CHUNK)]
 
 
 def _epub_nav(starts, chapters, page_ord, sec_of) -> str:
@@ -377,8 +394,11 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
     items, spine, docs = [], [], []
     if starts:
         sec_of = {}                       # page ordinal -> section file name
-        for si, (first, _) in enumerate(secs, start=1):
-            last = secs[si][0] if si < len(secs) else len(images)
+        # ponytail: _epub_sections used to pair each boundary with a title
+        # ("Início" for the untitled gap before the first chapter) that nothing
+        # here ever read — plain boundaries are enough.
+        for si, first in enumerate(secs, start=1):
+            last = secs[si] if si < len(secs) else len(images)
             name = f"s{si:04d}.xhtml"
             body = []
             for j in range(first, last):

@@ -704,3 +704,31 @@ def test_chapter_outside_the_volume_is_dropped_with_a_warning(tmp_path):
                         warn=said.append)
     assert n > 0
     assert len(said) == 1 and "Fantasma" in said[0]
+
+
+def test_duplicate_chapter_marks_at_same_index_keep_first_with_a_warning(tmp_path, monkeypatch):
+    # same philosophy as the out-of-range case above: a chapter that vanishes
+    # without a signal is worse than one that is obviously wrong
+    import io as _io, zipfile as _zip
+    import manga_panels.pipeline as pl
+    src = tmp_path / "ch.cbz"
+    with _zip.ZipFile(src, "w") as z:
+        z.writestr("ComicInfo.xml",
+                   '<ComicInfo><Pages><Page Image="0" Bookmark="First"/>'
+                   '<Page Image="0" Bookmark="Second"/></Pages></ComicInfo>')
+        b = _io.BytesIO(); _grid_page().save(b, "PNG")
+        z.writestr("000.png", b.getvalue())
+    captured = {}
+    real = pl.pack
+
+    def spy(imgs, out, **kw):
+        captured.update(kw)
+        return real(imgs, out, **{k: v for k, v in kw.items()
+                                  if k not in ("page_starts", "chapters",
+                                               "title", "creator")})
+
+    monkeypatch.setattr(pl, "pack", spy)
+    said = []
+    process_archive(src, tmp_path / "out.cbz", page_pos="off", warn=said.append)
+    assert captured["chapters"] == [(0, "First")]        # first kept, second dropped
+    assert len(said) == 1 and "First" in said[0] and "Second" in said[0]

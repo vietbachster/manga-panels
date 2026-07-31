@@ -39,7 +39,8 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     - A page with <=1 panel (cover/splash) is emitted only once.
     - page_pos: 'before' (macro page before the panels), 'after', or 'off'.
     - split_ratio: cut panels wider than N:1 into vertical slices (None = off).
-    - warn(msg): called when a ComicInfo chapter mark points outside the volume.
+    - warn(msg): called when a ComicInfo chapter mark points outside the volume,
+      or collides with another mark on the same page.
     - on_page(done, total): called after each processed page (progress)."""
     if page_pos not in ("before", "after", "off"):
         raise ValueError(f"invalid page_pos: {page_pos!r} (use before/after/off)")
@@ -87,14 +88,25 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     meta = read_comicinfo(in_path)
     # ComicInfo indexes source pages; the packers work in output-image indices.
     # A mark outside the volume is dropped, but never silently: a chapter that
-    # vanishes with no signal is worse than one that is obviously wrong.
-    chapters = []
+    # vanishes with no signal is worse than one that is obviously wrong. Two
+    # marks on the same source page collide the same way once translated —
+    # keep the first, warn naming the one dropped.
+    chapters: list[tuple[int, str]] = []
+    seen: dict[int, str] = {}
     for p, t in meta.get("chapters", []):
-        if p in page_at:
-            chapters.append((page_at[p], t))
-        elif warn is not None:
-            warn(f"chapter {t!r} points at page {p + 1}, which this archive "
-                 f"does not have ({len(pages)} pages) — skipped")
+        if p not in page_at:
+            if warn is not None:
+                warn(f"chapter {t!r} points at page {p + 1}, which this archive "
+                     f"does not have ({len(pages)} pages) — skipped")
+            continue
+        idx = page_at[p]
+        if idx in seen:
+            if warn is not None:
+                warn(f"chapter {t!r} points at the same page as {seen[idx]!r} "
+                     f"— keeping {seen[idx]!r}, {t!r} skipped")
+            continue
+        seen[idx] = t
+        chapters.append((idx, t))
     pack(out_imgs, out_path, fmt=fmt, quality=quality, max_width=max_width,
          grayscale=grayscale, gamma=gamma, upscale=upscale,
          rotate_wide=rotate_wide, pad_aspect=pad_aspect,
