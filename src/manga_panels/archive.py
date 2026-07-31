@@ -86,11 +86,18 @@ def read_comicinfo(path: str | Path) -> dict:
     series, volume = text("Series"), text("Volume")
     title = f"{series} Vol. {volume}" if series and volume else series or text("Title")
     pages = root.find("Pages")
+    # key=image index only: sorted() is stable, so two marks on the same page
+    # keep document order instead of being re-broken by bookmark text — "keep
+    # the first" (the caller's dedup) should mean "first in the file", not
+    # "first alphabetically".
     chapters = sorted(
-        (int(p.get("Image")), (p.get("Bookmark") or "").strip())
-        for p in (pages if pages is not None else [])
-        if (p.get("Bookmark") or "").strip()
-        and (p.get("Image") or "").lstrip("-").isdecimal()
+        (
+            (int(p.get("Image")), (p.get("Bookmark") or "").strip())
+            for p in (pages if pages is not None else [])
+            if (p.get("Bookmark") or "").strip()
+            and (p.get("Image") or "").lstrip("-").isdecimal()
+        ),
+        key=lambda c: c[0],
     )
     out = {"chapters": chapters}
     if title:

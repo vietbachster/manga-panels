@@ -1,9 +1,10 @@
 import io
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from PIL import Image
-from manga_panels.archive import unpack, pack
+from manga_panels.archive import unpack, pack, _EPUB_MIN_SECTION
 
 
 def _make_cbz(path: Path, n: int) -> None:
@@ -483,6 +484,19 @@ def test_read_comicinfo_chapters_are_sorted_by_image(tmp_path):
     assert read_comicinfo(p)["chapters"] == [(2, "A"), (5, "B")]
 
 
+def test_read_comicinfo_ties_keep_document_order(tmp_path):
+    # bug: sorting by (image, bookmark) broke ties alphabetically, so a later
+    # dedup step ("keep the first") kept whichever bookmark sorted first in the
+    # alphabet instead of whichever appeared first in the file
+    from manga_panels.archive import read_comicinfo
+    p = tmp_path / "v.cbz"
+    _cbz_with_comicinfo(p, '<ComicInfo><Pages>'
+                           '<Page Image="3" Bookmark="Zebra"/>'
+                           '<Page Image="3" Bookmark="Apple"/>'
+                           '</Pages></ComicInfo>')
+    assert read_comicinfo(p)["chapters"] == [(3, "Zebra"), (3, "Apple")]
+
+
 def test_read_comicinfo_whitespace_only_bookmark_is_not_a_chapter(tmp_path):
     # bug: the filter tested the raw attribute for truthiness, but the tuple is
     # built with .strip() — so a whitespace-only Bookmark slipped through as an
@@ -602,6 +616,52 @@ def test_epub_normally_spaced_chapters_each_get_a_section(tmp_path):
     root = ET.fromstring(z.read("OEBPS/content.opf"))
     refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
     assert len(refs) == 3
+
+
+def test_epub_sections_floor_is_page_ordinal_not_image_distance(tmp_path):
+    # a source page explodes into a variable number of images (its panels), so
+    # image-index distance and page-ordinal distance are different coordinate
+    # spaces — the floor must use the latter. Six 1-image pages, then one fat
+    # page with 10 images, then six more 1-image pages:
+    #   Cap A opens on the fat page (ordinal 6, far enough from 0 to split).
+    #   Cap B opens on the very next page (ordinal 7 — 1 page later, under the
+    #     floor) but 10 images later (over the floor) — must merge with A.
+    #   Cap C opens 5 pages after A (ordinal 12 — at the floor) — must still
+    #     split, proving the fix doesn't just merge everything near the fat page.
+    fat = 10
+    counts = [1, 1, 1, 1, 1, 1, fat, 1, 1, 1, 1, 1, 1]
+    starts, idx = [], 0
+    for i, c in enumerate(counts):
+        starts.append((idx, f"Página {i + 1}"))
+        idx += c
+    n_images = idx
+    cap_a, cap_b, cap_c = starts[6][0], starts[7][0], starts[12][0]
+    assert cap_b - cap_a >= _EPUB_MIN_SECTION            # far apart in image index...
+    chapters = [(cap_a, "Capítulo A"), (cap_b, "Capítulo B"), (cap_c, "Capítulo C")]
+
+    z = _epub_struct(tmp_path, n_images, starts, chapters=chapters)
+    root = ET.fromstring(z.read("OEBPS/content.opf"))
+    refs = [e.get("idref") for e in root.findall(".//opf:spine/opf:itemref", _OPF)]
+    assert refs == ["s0001", "s0002", "s0003"]           # B merged into A's section
+
+    # boundaries land on the correct page's first image
+    assert f'src="img/{cap_a + 1:04d}.jpg"' in z.read("OEBPS/s0002.xhtml").decode()
+    assert f'src="img/{cap_c + 1:04d}.jpg"' in z.read("OEBPS/s0003.xhtml").decode()
+
+    ET.fromstring(z.read("OEBPS/nav.xhtml"))             # raises if the nesting broke the XML
+    nav = z.read("OEBPS/nav.xhtml").decode()
+    matches = re.findall(r'<a href="([^"]+)">(Capítulo [ABC])</a>', nav)
+    hrefs = {title: href for href, title in matches}
+    assert set(hrefs) == {"Capítulo A", "Capítulo B", "Capítulo C"}
+
+    sec_a, anchor_a = hrefs["Capítulo A"].split("#")
+    sec_b, anchor_b = hrefs["Capítulo B"].split("#")
+    sec_c, anchor_c = hrefs["Capítulo C"].split("#")
+    assert sec_a == sec_b == "s0002.xhtml"               # A and B share a section...
+    assert sec_c == "s0003.xhtml"                        # ...C does not
+    # every chapter's #pagK anchor exists in the section file its link names
+    for sec, anchor in ((sec_a, anchor_a), (sec_b, anchor_b), (sec_c, anchor_c)):
+        assert f'id="{anchor}"' in z.read(f"OEBPS/{sec}").decode()
 
 
 def test_epub_puts_an_anchor_before_every_source_page(tmp_path):
