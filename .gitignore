@@ -10,6 +10,8 @@ build/
 *.cbr
 *_preview/
 *_panels/
+# (gitignore não tem comentário no fim da linha; o de baixo tem que ficar sozinho)
+!src/manga_panels/
 *_debug/
 # config pessoal (caminhos locais); não versionar
 manga-panels.toml
