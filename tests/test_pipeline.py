@@ -393,6 +393,47 @@ def test_process_archive_cover_crop_right_side(tmp_path):
     assert unpack(out)[0].size == (60, 100)
 
 
+def test_process_archive_cover_crop_range(tmp_path):
+    # a manga jacket is flap + front + back: the front cover is a middle band,
+    # which a fraction from either edge cannot express
+    src = tmp_path / "ch.cbz"
+    pack([Image.new("RGB", (300, 100), (0, 0, 0)), _grid_page()], src)
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, cover_crop=(1 / 3, 2 / 3))
+    assert unpack(out)[0].size == (100, 100)
+
+
+def test_cli_cover_crop_accepts_a_range(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([Image.new("RGB", (300, 100), (0, 0, 0)), _grid_page()], src)
+    assert main([str(src), "--cover-crop", "0.2:0.5"]) == 0
+    assert unpack(tmp_path / "ch_panels.cbz")[0].size == (90, 100)
+
+
+def test_cli_cover_crop_rejects_a_backwards_range(tmp_path):
+    import pytest
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    for bad in ("0.6:0.2", "0.5:", "1.2:1.5", "a:b"):
+        with pytest.raises(SystemExit) as e:
+            main([str(src), "--cover-crop", bad])
+        assert e.value.code == 2
+
+
+def test_cli_rtl_reaches_the_epub(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--format", "epub", "--rtl"]) == 0
+    with zipfile.ZipFile(tmp_path / "ch_panels.epub") as z:
+        assert 'page-progression-direction="rtl"' in z.read("OEBPS/content.opf").decode()
+    assert main([str(src), "--format", "epub", "-o", str(tmp_path / "d.epub")]) == 0
+    with zipfile.ZipFile(tmp_path / "d.epub") as z:
+        assert 'page-progression-direction="ltr"' in z.read("OEBPS/content.opf").decode()
+
+
 def test_cli_cover_missing_errors(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"

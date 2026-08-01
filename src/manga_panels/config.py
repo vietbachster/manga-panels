@@ -11,7 +11,7 @@ from manga_panels.errors import MangaPanelsError
 _KNOWN = {"output", "library", "format", "quality", "max_width", "device",
           "grayscale", "gamma", "preview", "debug", "page", "keep_first",
           "cover", "cover_crop", "cover_side", "split_ratio", "upscale",
-          "rotate_wide", "pad_aspect", "suffix", "overwrite"}
+          "rotate_wide", "pad_aspect", "rtl", "suffix", "overwrite"}
 
 _DISCOVER = [
     Path("manga-panels.toml"),

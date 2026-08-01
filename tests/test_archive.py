@@ -251,10 +251,28 @@ def test_epub_spine_lists_every_page_in_order(tmp_path):
     assert refs == ["p0001", "p0002", "p0003"]
 
 
-def test_epub_spine_is_right_to_left(tmp_path):
+def test_epub_spine_turns_left_to_right_by_default(tmp_path):
+    # one panel per page: there is no spread to pair, so rtl would only change
+    # which edge advances the book. Manga reading order lives inside the images.
     with zipfile.ZipFile(_epub(tmp_path)) as z:
         root = ET.fromstring(z.read("OEBPS/content.opf"))
+    assert root.find(".//opf:spine", _OPF).get("page-progression-direction") == "ltr"
+
+
+def test_epub_spine_is_right_to_left_with_rtl(tmp_path):
+    with zipfile.ZipFile(_epub(tmp_path, rtl=True)) as z:
+        root = ET.fromstring(z.read("OEBPS/content.opf"))
     assert root.find(".//opf:spine", _OPF).get("page-progression-direction") == "rtl"
+
+
+def test_epub_css_centres_and_bounds_each_image(tmp_path):
+    # without this the image sits top-left of the flow: the reader has nothing
+    # telling it to centre, to fit the screen, or to give each panel its own page
+    with zipfile.ZipFile(_epub(tmp_path)) as z:
+        css = z.read("OEBPS/style.css").decode()
+    assert "margin: 0 auto" in css          # horizontal centring
+    assert "max-width: 100%" in css and "max-height: 100%" in css   # never overflow
+    assert "page-break-after: always" in css                        # one panel per screen
 
 
 def test_epub_first_image_is_the_cover(tmp_path):

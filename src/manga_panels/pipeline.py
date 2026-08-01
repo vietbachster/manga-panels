@@ -28,9 +28,11 @@ def _panel_imgs(page: Image.Image, box: Box, obstacles: list[list[float]],
 def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     page_pos: str = "before", max_width: int | None = None,
                     keep_first: int = 0, grayscale: bool = False, gamma: float = 1.0,
-                    cover=None, cover_crop: float | None = None, cover_side: str = "left",
+                    cover=None, cover_crop: float | tuple[float, float] | None = None,
+                    cover_side: str = "left",
                     split_ratio: float | None = None, upscale: bool = False,
                     rotate_wide: float | None = None, pad_aspect: float | None = None,
+                    rtl: bool = False,
                     warn: Callable[[str], None] | None = None,
                     on_page: Callable[[int, int], None] | None = None) -> int:
     """Explode each page into panels in a new CBZ. Returns the total number of
@@ -53,9 +55,16 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     cover_img = load_image(cover) if cover is not None else None
     if cover_img is None and cover_crop and pages:   # crop the front cover off a wide page 0
         w, h = pages[0].size
-        cw = max(1, min(w, round(w * cover_crop)))
-        box = (0, 0, cw, h) if cover_side == "left" else (w - cw, 0, w, h)
-        cover_img = pages[0].crop(box)
+        if isinstance(cover_crop, (tuple, list)):    # (start, end) slice of the width
+            # a manga jacket is flap + front + back: the front cover is a middle
+            # band, which a fraction from either edge cannot express
+            x0, x1 = round(w * cover_crop[0]), round(w * cover_crop[1])
+        else:
+            cw = round(w * cover_crop)
+            x0, x1 = (0, cw) if cover_side == "left" else (w - cw, w)
+        x0 = max(0, min(w - 1, x0))
+        x1 = max(x0 + 1, min(w, x1))                 # always at least one column
+        cover_img = pages[0].crop((x0, 0, x1, h))
     if cover_img is not None:                        # -> PDF page 1 / library thumbnail
         page_starts.append((len(out_imgs), "Capa"))
         out_imgs.append(cover_img)
@@ -115,6 +124,6 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     pack(out_imgs, out_path, fmt=fmt, quality=quality, max_width=max_width,
          grayscale=grayscale, gamma=gamma, upscale=upscale,
          rotate_wide=rotate_wide, pad_aspect=pad_aspect,
-         page_starts=page_starts, chapters=chapters,
+         page_starts=page_starts, chapters=chapters, rtl=rtl,
          title=meta.get("title"), creator=meta.get("creator"))
     return len(out_imgs)
