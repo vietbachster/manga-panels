@@ -672,6 +672,8 @@ def test_cli_width_only_preset_changes_nothing_else(tmp_path, monkeypatch):
 
 
 def test_cli_flag_beats_device_preset(tmp_path, monkeypatch):
+    import pytest
+    pytest.importorskip("img2pdf")
     from manga_panels.cli import main
     captured = _capture(monkeypatch)
     assert main([_src(tmp_path), "--device", "x4", "--format", "pdf",
@@ -734,6 +736,55 @@ def test_cli_rejects_an_unknown_device(tmp_path):
     with pytest.raises(SystemExit) as e:
         main([_src(tmp_path), "--device", "bogus"])
     assert e.value.code == 2
+
+
+def test_cli_config_typo_in_device_name_is_rejected(tmp_path, monkeypatch):
+    # a typo in [defaults].device never reaches argparse's choices check (it
+    # arrives through set_defaults), so it must be validated by hand -- silently
+    # ignoring it would process a whole volume at the wrong width
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = "papermhite"\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 1
+    assert captured == {}      # process_archive (the spy) was never reached
+
+
+def test_cli_config_device_as_a_list_is_rejected_cleanly(tmp_path):
+    # [defaults]\ndevice = ["x4"] (a list, or an inline table) must not raise a
+    # raw TypeError out of the CLI -- known failures are a clean message
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = ["x4"]\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 1
+
+
+def test_cli_device_feedback_line_reads_from_args_not_profile(tmp_path, monkeypatch, capsys):
+    # the printed "device x4: ..." line must show the value the user actually got,
+    # not the profile's own number -- otherwise an override reads as silently ignored
+    from manga_panels.cli import main
+    _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4", "--max-width", "800"]) == 0
+    assert "max-width=800" in capsys.readouterr().out
+
+
+def test_cli_typed_max_width_beats_device_preset(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4", "--max-width", "800"]) == 0
+    assert captured["max_width"] == 800
+    assert captured["fmt"] == "epub"        # the rest of the preset survives
+
+
+def test_cli_defaults_section_fills_a_gap_under_an_active_profile(tmp_path, monkeypatch):
+    # paperwhite's profile sets only max_width; [defaults] must still supply gamma
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text("[defaults]\ngamma = 1.8\n")
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "paperwhite"]) == 0
+    assert captured["gamma"] == 1.8
+    assert captured["max_width"] == 1264
 
 
 def test_page_starts_marks_every_source_page(tmp_path, monkeypatch):

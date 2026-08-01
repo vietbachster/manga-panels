@@ -168,8 +168,11 @@ def main(argv: list[str] | None = None) -> int:
     # the parser must accept, and the device decides the defaults — both have to be
     # known before the real parse.
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config")
-    pre.add_argument("--device")
+    # nargs="?": a bare --config/--device (no value) falls through to the real
+    # parser instead of the pre-parser dying first — that's what lets `-h --device`
+    # print the real help and `x.cbz --device` show the real usage line.
+    pre.add_argument("--config", nargs="?")
+    pre.add_argument("--device", nargs="?")
     cfg_arg, _ = pre.parse_known_args(argv)
     try:
         cfg, cfg_devices = load_config(
@@ -179,6 +182,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     ap = _build_parser(sorted(_DEVICES.keys() | cfg_devices.keys()))
     device = cfg_arg.device or cfg.get("device")
+    if cfg_arg.device is None and device is not None:
+        # argparse checks a typed --device against its choices, but never a value
+        # that arrives through set_defaults; a silent typo here would process a
+        # whole volume at the wrong width.
+        if not isinstance(device, str) or (device not in _DEVICES
+                                           and device not in cfg_devices):
+            console.print(f"[red]error:[/] config: unknown device: {escape(str(device))}")
+            return 1
     # A profile is what the hardware demands; [defaults] is personal taste, so it
     # sits BELOW the profile — that keeps a `format = "pdf"` habit from leaking into
     # a reader that cannot open a PDF. A typed flag beats both, because argparse
