@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Sequence
 
 from PIL import Image
 
 from manga_panels.archive import load_image, pack, read_comicinfo, unpack
 from manga_panels.detect import Box
+from manga_panels.errors import MangaPanelsError
 from manga_panels.ml import MagiDetector
 from manga_panels.split import split_wide
 
@@ -25,10 +26,43 @@ def _panel_imgs(page: Image.Image, box: Box, obstacles: list[list[float]],
     return crop_panels(page, [box, *parts])       # ponytail: always "whole first", no knob
 
 
+def _cover_box(size, cover_crop, cover_side: str) -> tuple[int, int, int, int]:
+    """Where the front cover sits on a wide page 0: a fraction taken from
+    `cover_side`, or an explicit (start, end) slice of the width — a manga jacket is
+    flap + front + back, so the front cover is a middle band that no fraction from
+    either edge can reach.
+
+    Validated here and not only in the CLI: a value out of manga-panels.toml never
+    passes through argparse, and a bad one used to yield a silent 1-pixel cover."""
+    w, h = size
+    if isinstance(cover_crop, (tuple, list)):
+        try:
+            a, b = (float(v) for v in cover_crop)
+        except (TypeError, ValueError):
+            raise MangaPanelsError(
+                f"cover_crop slice must be two numbers, got {list(cover_crop)!r}") from None
+        if not (0 <= a < b <= 1):            # rejects NaN too
+            raise MangaPanelsError(
+                f"cover_crop slice must be 0 <= start < end <= 1, got {a}:{b}")
+        x0, x1 = round(w * a), round(w * b)
+    else:
+        try:
+            f = float(cover_crop)
+        except (TypeError, ValueError):
+            raise MangaPanelsError(f"cover_crop must be a number, got {cover_crop!r}") from None
+        if not 0 <= f <= 1:                  # rejects NaN too
+            raise MangaPanelsError(f"cover_crop must be between 0 and 1, got {f}")
+        cw = round(w * f)
+        x0, x1 = (0, cw) if cover_side == "left" else (w - cw, w)
+    x0 = max(0, min(w - 1, x0))
+    x1 = max(x0 + 1, min(w, x1))             # always at least one column wide
+    return (x0, 0, x1, h)
+
+
 def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     page_pos: str = "before", max_width: int | None = None,
                     keep_first: int = 0, grayscale: bool = False, gamma: float = 1.0,
-                    cover=None, cover_crop: float | tuple[float, float] | None = None,
+                    cover=None, cover_crop: float | Sequence[float] | None = None,
                     cover_side: str = "left",
                     split_ratio: float | None = None, upscale: bool = False,
                     rotate_wide: float | None = None, pad_aspect: float | None = None,
@@ -54,17 +88,7 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     page_at: dict[int, int] = {}        # source page index -> index into out_imgs
     cover_img = load_image(cover) if cover is not None else None
     if cover_img is None and cover_crop and pages:   # crop the front cover off a wide page 0
-        w, h = pages[0].size
-        if isinstance(cover_crop, (tuple, list)):    # (start, end) slice of the width
-            # a manga jacket is flap + front + back: the front cover is a middle
-            # band, which a fraction from either edge cannot express
-            x0, x1 = round(w * cover_crop[0]), round(w * cover_crop[1])
-        else:
-            cw = round(w * cover_crop)
-            x0, x1 = (0, cw) if cover_side == "left" else (w - cw, w)
-        x0 = max(0, min(w - 1, x0))
-        x1 = max(x0 + 1, min(w, x1))                 # always at least one column
-        cover_img = pages[0].crop((x0, 0, x1, h))
+        cover_img = pages[0].crop(_cover_box(pages[0].size, cover_crop, cover_side))
     if cover_img is not None:                        # -> PDF page 1 / library thumbnail
         page_starts.append((len(out_imgs), "Capa"))
         out_imgs.append(cover_img)

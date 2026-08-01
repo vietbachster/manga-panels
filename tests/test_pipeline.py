@@ -411,6 +411,49 @@ def test_cli_cover_crop_accepts_a_range(tmp_path):
     assert unpack(tmp_path / "ch_panels.cbz")[0].size == (90, 100)
 
 
+def _two_tone_page(w=200, h=100):
+    """Left half black, right half white — so a crop's *position* is testable,
+    which its size alone never is."""
+    im = Image.new("RGB", (w, h), (255, 255, 255))
+    im.paste(Image.new("RGB", (w // 2, h), (0, 0, 0)), (0, 0))
+    return im
+
+
+def test_cli_cover_side_picks_the_right_edge(tmp_path):
+    # sizes alone cannot tell a left crop from a right one: assert a pixel
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_two_tone_page(), _grid_page()], src)
+    assert main([str(src), "--cover-crop", "0.25", "--cover-side", "right",
+                 "-o", str(tmp_path / "r.cbz")]) == 0
+    assert main([str(src), "--cover-crop", "0.25", "-o", str(tmp_path / "l.cbz")]) == 0
+    assert unpack(tmp_path / "r.cbz")[0].getpixel((0, 0)) == (255, 255, 255)   # white half
+    assert unpack(tmp_path / "l.cbz")[0].getpixel((0, 0)) == (0, 0, 0)        # black half
+
+
+def test_cover_crop_from_config_is_validated(tmp_path):
+    # a TOML value never passes through argparse; a backwards slice used to give a
+    # silent 1-pixel cover on every volume of a batch, exit 0
+    import pytest
+    from manga_panels.errors import MangaPanelsError
+    src = tmp_path / "ch.cbz"
+    pack([Image.new("RGB", (300, 100)), _grid_page()], src)
+    for bad in ([0.72, 0.385], [0.5], -0.4, "x"):
+        with pytest.raises(MangaPanelsError):
+            process_archive(src, tmp_path / "out.cbz", cover_crop=bad)
+
+
+def test_cli_cover_crop_zero_means_off(tmp_path):
+    # 0 is the off sentinel everywhere else, so a config/profile value stays
+    # switchable from the command line
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([Image.new("RGB", (200, 100)), _grid_page()], src)
+    assert main([str(src), "--cover-crop", "0", "-o", str(tmp_path / "z.cbz")]) == 0
+    assert main([str(src), "-o", str(tmp_path / "n.cbz")]) == 0
+    assert len(unpack(tmp_path / "z.cbz")) == len(unpack(tmp_path / "n.cbz"))
+
+
 def test_cli_cover_crop_rejects_a_backwards_range(tmp_path):
     import pytest
     from manga_panels.cli import main

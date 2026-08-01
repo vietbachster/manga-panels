@@ -326,14 +326,15 @@ _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 </container>
 """
 
-# ponytail: deliberately minimal — no width/height rules. A reader that scales an
-# image to fit and centres it (the Xteink X4's firmware does both) gets it right on
-# its own, and forcing a CSS width sends it down a different code path where it may
-# scale up unpredictably. The images are already sized; let the renderer be dumb.
-# Without this an image sits at the top-left of the flow: nothing tells the reader
+# Without these an image sits at the top-left of the flow: nothing tells the reader
 # to centre it, to keep it inside the screen, or to give each panel its own page.
-# `text-align: center` alongside `margin: 0 auto` on purpose — Kindle's KF8 honours
-# one or the other depending on the build, and both together cost nothing.
+# Real Kindle use is what caught it.
+# Only `max-*`, never `width`/`height`: these rules can shrink an image, never grow
+# one, so a reader that already sizes images itself (the Xteink X4's firmware scales
+# to fit and centres horizontally) cannot be pushed into upscaling something.
+# `max-height: 100%` is belt-and-braces: per CSS 2.1 a percentage max-height is
+# `none` when the containing block's height is auto, so it may well be inert — but
+# it can only ever shrink, and we have no device here to measure it on.
 _EPUB_CSS = (
     "html, body { margin: 0; padding: 0; text-align: center; }\n"
     "img { display: block; margin: 0 auto;\n"

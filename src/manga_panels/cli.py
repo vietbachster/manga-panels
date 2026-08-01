@@ -66,7 +66,9 @@ def _crop(text: str) -> float | tuple[float, float]:
     try:
         if ":" not in text:
             f = float(text)
-            if not (math.isfinite(f) and 0 < f <= 1):
+            # 0 is the "off" sentinel, like --split-ratio/--rotate-wide: it is how a
+            # cover_crop set in the config or a device profile gets switched back off.
+            if not (math.isfinite(f) and 0 <= f <= 1):
                 raise ValueError
             return f
         a, _, b = text.partition(":")
@@ -75,7 +77,7 @@ def _crop(text: str) -> float | tuple[float, float]:
             raise ValueError
     except ValueError:
         raise argparse.ArgumentTypeError(
-            "expected a fraction like 0.47, or a slice like 0.33:0.67 with "
+            "expected a fraction like 0.47 (0 = off), or a slice like 0.33:0.67 with "
             f"0 <= start < end <= 1, got {text!r}") from None
     return fa, fb
 
@@ -134,7 +136,7 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
                        help="keep the first N pages whole")
     g_lay.add_argument("--cover",
                        help="prepend this image as page 1 (the PDF/library thumbnail)")
-    g_lay.add_argument("--cover-crop", type=_crop, metavar="F | A:B",
+    g_lay.add_argument("--cover-crop", type=_crop, metavar="F|A:B",
                        help="make the cover from a wide first page (wraparound): a "
                             "fraction (0-1) taken from --cover-side, or a slice like "
                             "0.33:0.67 when the front cover sits between the flaps")
