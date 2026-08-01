@@ -227,7 +227,8 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
          rotate_wide: float | None = None, pad_aspect: float | None = None,
          page_starts: list[tuple[int, str]] | None = None,
          chapters: list[tuple[int, str]] | None = None,
-         title: str | None = None, creator: str | None = None) -> None:
+         title: str | None = None, creator: str | None = None,
+         rtl: bool = False) -> None:
     out_path = Path(out_path)
     fmt = fmt.lower()
     if fmt == "pdf":                              # a PDF file, one panel per page
@@ -242,7 +243,7 @@ def pack(images: list[Image.Image], out_path: str | Path, *,
                    grayscale=grayscale, gamma=gamma, upscale=upscale,
                    rotate_wide=rotate_wide, pad_aspect=pad_aspect,
                    page_starts=page_starts, chapters=chapters,
-                   title=title, creator=creator)
+                   title=title, creator=creator, rtl=rtl)
         return
     if fmt in ("jpg", "jpeg"):
         # jpeg is already compressed: STORED avoids pointless zip recompression
@@ -325,11 +326,21 @@ _EPUB_CONTAINER = """<?xml version="1.0" encoding="UTF-8"?>
 </container>
 """
 
-# ponytail: deliberately minimal — no width/height rules. A reader that scales an
-# image to fit and centres it (the Xteink X4's firmware does both) gets it right on
-# its own, and forcing a CSS width sends it down a different code path where it may
-# scale up unpredictably. The images are already sized; let the renderer be dumb.
-_EPUB_CSS = "html, body { margin: 0; padding: 0; }\nimg { display: block; }\n"
+# Without these an image sits at the top-left of the flow: nothing tells the reader
+# to centre it, to keep it inside the screen, or to give each panel its own page.
+# Real Kindle use is what caught it.
+# Only `max-*`, never `width`/`height`: these rules can shrink an image, never grow
+# one, so a reader that already sizes images itself (the Xteink X4's firmware scales
+# to fit and centres horizontally) cannot be pushed into upscaling something.
+# `max-height: 100%` is belt-and-braces: per CSS 2.1 a percentage max-height is
+# `none` when the containing block's height is auto, so it may well be inert — but
+# it can only ever shrink, and we have no device here to measure it on.
+_EPUB_CSS = (
+    "html, body { margin: 0; padding: 0; text-align: center; }\n"
+    "img { display: block; margin: 0 auto;\n"
+    "      max-width: 100%; max-height: 100%;\n"
+    "      page-break-after: always; }\n"
+)
 
 
 _EPUB_CHUNK = 20      # source pages per section when the book has no chapters
@@ -428,8 +439,9 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
                pad_aspect: float | None = None,
                page_starts: list[tuple[int, str]] | None = None,
                chapters: list[tuple[int, str]] | None = None,
-               title: str | None = None, creator: str | None = None) -> None:
-    """Write an EPUB 3, right-to-left (manga order). With `page_starts` the book
+               title: str | None = None, creator: str | None = None,
+               rtl: bool = False) -> None:
+    """Write an EPUB 3. With `page_starts` the book
     is split into chapter-sized sections with an anchor at every source page, so
     the table of contents navigates by real manga page instead of by panel;
     without it, one image per document (the original shape).
@@ -504,7 +516,10 @@ def _pack_epub(images: list[Image.Image], out_path: Path, *, quality: int,
         '    <item id="css" href="style.css" media-type="text/css"/>',
         *items,
         '  </manifest>',
-        '  <spine page-progression-direction="rtl">',   # manga reads right to left
+        # ltr by default: one panel per page leaves no spread to pair, so rtl would
+        # only flip which screen edge advances the book. Manga reading order is
+        # inside the images, already linearised by the detector.
+        f'  <spine page-progression-direction="{"rtl" if rtl else "ltr"}">',
         *spine,
         '  </spine>',
         '</package>',

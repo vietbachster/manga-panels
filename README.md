@@ -139,7 +139,7 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 | `--device x4` | perfil do aparelho: largura da tela **+ formato e layout** onde o hardware exige (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
 | `--grayscale` | tons de cinza — menor e nativo do e-ink |
 | `--gamma 1.8` | escurece os meios-tons pro e-ink (mais contraste; `1.0` = off) |
-| `--format epub` | gera um `.epub` (uma imagem por página, ordem RTL) — pra leitores que não abrem cbz nem pdf |
+| `--format epub` | gera um `.epub` (uma imagem por página) — pra leitores que não abrem cbz nem pdf |
 | `--upscale` | também **amplia** imagens até `--max-width` (default só encolhe) |
 | `--rotate-wide 1.0` | gira 90° (horário) painel mais largo que N:1, pra ler virando o aparelho; `0` = nunca |
 | `--pad-aspect 3:5` | preenche com branco até essa proporção, conteúdo centralizado |
@@ -147,7 +147,8 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 | `--split-ratio 1.0` | corta painel mais largo que N:1 em fatias verticais (direita→esquerda); o painel inteiro sai antes das fatias |
 | `--keep-first N` | mantém as N primeiras páginas inteiras (capa/miolo) |
 | `--cover img.jpg` | põe essa imagem como página 1 — a **thumbnail** do PDF na biblioteca |
-| `--cover-crop 0.4` | tira a capa de uma **página 1 larga** (wraparound): fração da largura; `--cover-side left/right` |
+| `--cover-crop 0.4` | tira a capa de uma **página 1 larga** (wraparound): fração da largura (com `--cover-side left/right`) ou uma fatia, `0.385:0.72` |
+| `--rtl` | vira as páginas do EPUB da direita pra esquerda (estilo mangá); default é da esquerda pra direita |
 | `--suffix _cortado` | muda o texto no nome de saída (default `_panels`) |
 | `--overwrite` | sobrescreve o arquivo original no lugar (destrutivo) |
 
@@ -171,9 +172,30 @@ uma imagem específica, `--cover cover.jpg` (ex.: o `cover.jpg` do volume) — e
 entra inteira como página 1.
 
 Se a página 1 é uma **spread larga** (capa wraparound frente+verso), ela fica
-deitada e vira uma thumbnail ruim. `--cover-crop 0.4` corta a **capa da frente**
-(uma fração da largura) e usa como página 1. Ajuste a fração (menor = mais
-retrato) e `--cover-side left|right` conforme o layout do teu scan.
+deitada e vira uma thumbnail ruim. `--cover-crop` corta a **capa da frente** e usa
+como página 1, de duas formas:
+
+```bash
+--cover-crop 0.4                 # fração da largura, a partir de --cover-side
+--cover-crop 0.385:0.72          # uma fatia: do 38,5% ao 72% da largura
+```
+
+A fatia existe porque uma **sobrecapa de mangá é orelha + capa + contracapa**: a
+capa da frente fica no *meio*, onde nenhuma fração a partir da borda chega. E as
+proporções mudam de volume pra volume (a orelha e a lombada variam), então o
+número é por arquivo — vale conferir antes de rodar o volume inteiro:
+
+```bash
+python -c "
+import sys, zipfile, io; from PIL import Image
+z = zipfile.ZipFile(sys.argv[1]); n = sorted(x for x in z.namelist() if x.endswith('.jpg'))[0]
+im = Image.open(io.BytesIO(z.read(n))); w, h = im.size
+a, b = (float(v) for v in sys.argv[2].split(':'))
+im.crop((int(w*a), 0, int(w*b), h)).save('/tmp/capa.png')
+" vol01.cbz 0.385:0.72 && xdg-open /tmp/capa.png
+```
+
+`--cover-crop 0` desliga (útil pra sobrescrever um valor vindo do config).
 
 Scans grandes (edições deluxe a 1600px+) geram arquivos pesados. Pra celular ou
 Kindle, reduza com `--max-width`:
@@ -270,6 +292,31 @@ meios-tons, mais contraste) melhoram a leitura.
 Os cortes já incluem os **balões que vazam** do painel e o **personagem que fala**
 (o Magi detecta texto e personagens, não só o painel). Capa e splash saem inteiras
 sozinhas (≤1 painel), sem duplicar.
+
+### Kindle (EPUB pelo Calibre)
+
+O Kindle prefere EPUB a PDF, e o EPUB leva capa e capítulos junto. Mande com o
+Calibre por USB — ele converte pra AZW3 na hora do envio (o Send to Kindle sem fio
+corta em ~50 MB, e um volume desses passa de 600 MB).
+
+```bash
+manga-panels vol01.cbz --device paperwhite --format epub --grayscale -q 85
+```
+
+Duas coisas que o uso real no aparelho corrigiu:
+
+- **A virada de página é da esquerda pra direita** (`ltr`), não estilo mangá. Cada
+  "página" do arquivo é **um painel só**: não existe página dupla pra parear, então
+  o `rtl` só mudaria de que lado você toca pra avançar. A ordem de leitura do mangá
+  está *dentro* das imagens, já linearizada pelo detector. Se quiser a virada estilo
+  mangá mesmo assim, `--rtl`.
+- **Os painéis são centralizados.** O CSS do EPUB agora centraliza a imagem,
+  impede que ela estoure a tela e dá uma tela por painel. Antes ela grudava no canto
+  superior esquerdo do fluxo.
+
+Se ainda sobrar folga vertical no seu modelo, o mesmo truque do X4 resolve sem
+depender do renderizador: `--pad-aspect 1264:1680` (a proporção da tela do
+Paperwhite) preenche até não sobrar folga em eixo nenhum.
 
 ### Capítulos
 

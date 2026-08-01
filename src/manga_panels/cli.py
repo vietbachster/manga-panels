@@ -59,6 +59,29 @@ def _aspect(text: str) -> float:
     return fw / fh
 
 
+def _crop(text: str) -> float | tuple[float, float]:
+    """'0.47' -> a fraction taken from --cover-side; '0.33:0.67' -> that slice of
+    the width. The slice exists because a manga jacket is flap + front + back: the
+    front cover is a middle band, which a fraction from either edge cannot reach."""
+    try:
+        if ":" not in text:
+            f = float(text)
+            # 0 is the "off" sentinel, like --split-ratio/--rotate-wide: it is how a
+            # cover_crop set in the config or a device profile gets switched back off.
+            if not (math.isfinite(f) and 0 <= f <= 1):
+                raise ValueError
+            return f
+        a, _, b = text.partition(":")
+        fa, fb = float(a), float(b)
+        if not (math.isfinite(fa) and math.isfinite(fb) and 0 <= fa < fb <= 1):
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "expected a fraction like 0.47 (0 = off), or a slice like 0.33:0.67 with "
+            f"0 <= start < end <= 1, got {text!r}") from None
+    return fa, fb
+
+
 def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="manga-panels",
@@ -93,6 +116,10 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     g_out.add_argument("--pad-aspect", type=_aspect, default=None, metavar="W:H",
                        help="pad images with white to this width:height ratio, content "
                             "centred (e.g. 3:5 for a 480x800 screen)")
+    g_out.add_argument("--rtl", action="store_true",
+                       help="right-to-left page turns in the EPUB (manga style); off "
+                            "by default, because one panel per page has no spread to "
+                            "pair and the reading order is already inside the images")
     g_out.add_argument("--preview", action="store_true",
                        help="write <stem>_preview.cbz with the panels drawn, without cropping")
     g_out.add_argument("--debug", action="store_true",
@@ -109,8 +136,10 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
                        help="keep the first N pages whole")
     g_lay.add_argument("--cover",
                        help="prepend this image as page 1 (the PDF/library thumbnail)")
-    g_lay.add_argument("--cover-crop", type=float,
-                       help="make the cover from a fraction (0-1) of a wide first page (wraparound)")
+    g_lay.add_argument("--cover-crop", type=_crop, metavar="F|A:B",
+                       help="make the cover from a wide first page (wraparound): a "
+                            "fraction (0-1) taken from --cover-side, or a slice like "
+                            "0.33:0.67 when the front cover sits between the flaps")
     g_lay.add_argument("--cover-side", choices=["left", "right"], default="left",
                        help="which side of page 1 the front cover is on (default left)")
     g_lay.add_argument("--split-ratio", type=float, default=None,
@@ -209,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     # one-sided param would make `--preview --upscale` a TypeError.
     common = dict(fmt=args.format, quality=args.quality, max_width=args.max_width,
                   upscale=args.upscale, rotate_wide=args.rotate_wide,
-                  pad_aspect=args.pad_aspect)
+                  pad_aspect=args.pad_aspect, rtl=args.rtl)
     ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
     if args.debug:
         run, kw, suffix = debug_archive, common, f"_debug.{ext}"
