@@ -78,6 +78,35 @@ flag na linha de comando **sempre vence** o config. Veja
 **[`manga-panels.example.toml`](manga-panels.example.toml)** com todas as opções
 comentadas — copie e ajuste.
 
+### Perfis de aparelho
+
+`--device x4` não é só a largura da tela: é o conjunto que **aquele hardware exige**.
+No X4, isso quer dizer `--format epub` (ele não abre cbz nem pdf), `--upscale` (o
+firmware nunca amplia), `--pad-aspect 3:5` (centraliza só na horizontal) e `--page off`
+(uma página inteira em 480px é ilegível). Nos leitores maiores o perfil traz **só a
+largura** — formato e qualidade ali são gosto, não exigência.
+
+Pra ajustar um perfil, crie uma seção `[device.<nome>]` no seu `manga-panels.toml`:
+
+```toml
+[defaults]                 # gosto geral, vale pra tudo
+format  = "pdf"
+quality = 85
+
+[device.x4]                # em cima do preset embutido do X4
+quality = 80
+output  = "/mnt/sd/manga"
+
+[device.mykobo]            # aparelho que a tool não conhece: vira opção de --device
+max_width = 1264
+grayscale = true
+```
+
+Do mais específico pro menos: **flag digitada** > `[device.NOME]` > **preset embutido**
+> `[defaults]` > default. O `[defaults]` fica abaixo do preset de propósito — é o que
+impede um `format = "pdf"` do dia a dia de virar um arquivo que o X4 não abre. Quando
+um perfil é aplicado, a tool imprime o que ele fez.
+
 ## Rodar num arquivo ou pasta (sem menu)
 
 Passe o caminho direto — pra um volume só, batch de uma pasta, ou quando não quer
@@ -107,7 +136,7 @@ Outras flags (todas em `manga-panels --help`; qualquer uma vence o config):
 |---|---|
 | `--preview` | `<stem>_preview.cbz` com os painéis desenhados/numerados (confere os cortes) |
 | `--debug` | `<stem>_debug.cbz` com tudo que o Magi vê (personagens, balões, quem fala) |
-| `--device paperwhite` | preset de `--max-width` por leitor (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
+| `--device x4` | perfil do aparelho: largura da tela **+ formato e layout** onde o hardware exige (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
 | `--grayscale` | tons de cinza — menor e nativo do e-ink |
 | `--gamma 1.8` | escurece os meios-tons pro e-ink (mais contraste; `1.0` = off) |
 | `--format epub` | gera um `.epub` (uma imagem por página, ordem RTL) — pra leitores que não abrem cbz nem pdf |
@@ -189,13 +218,20 @@ Duas particularidades do aparelho, ambas lidas do fonte do firmware:
 - **A tela tem 4 níveis de cinza** (cache interno de 2 bits/pixel). Medindo em
   páginas reais, `-q 80` já gera arquivos 27% menores que `-q 90` com só 1.1% dos
   pixels caindo num nível diferente — invisível no aparelho. Testado direto na
-  tela, dá pra ir mais fundo ainda: `-q 60` (usado na receita abaixo) também não
-  mostrou diferença perceptível nos 4 níveis de cinza, e é menos byte pra empurrar
+  tela, dá pra ir mais fundo ainda: o perfil `x4` usa `-q 75`, que em uso real não
+  mostrou diferença perceptível nos 4 níveis de cinza e é menos byte pra empurrar
   pelo WiFi do ESP32.
 
 ```bash
-manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 60 \
-    --rotate-wide 1.0 --pad-aspect 3:5
+manga-panels vol01.cbz --device x4
+```
+
+`--device x4` é exatamente a receita abaixo, que é a validada no aparelho — cada flag
+explicada no resto desta seção:
+
+```bash
+manga-panels vol01.cbz --format epub --max-width 480 --upscale --grayscale -q 75 \
+    --rotate-wide 1.0 --pad-aspect 3:5 --page off
 ```
 
 `--rotate-wide 1.0` gira todo painel mais largo que 1:1 e você lê virando o X4 no
