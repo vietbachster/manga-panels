@@ -99,3 +99,17 @@ def test_device_entry_that_is_not_a_table_is_ignored(tmp_path):
     warned = []
     _, devices = load_config(str(cfg), warn=warned.append)
     assert devices == {} and warned
+
+
+def test_top_level_device_scalar_is_ignored(tmp_path):
+    # the natural typo: `device` is a valid [defaults] key, so people write it
+    # at the top of the file, outside any section -> data["device"] is a str,
+    # not a table of tables. Must warn, not raise AttributeError, and must not
+    # cost the user their [defaults].
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('device = "x4"\n[defaults]\nquality = 80\n')
+    warned = []
+    defaults, devices = load_config(str(cfg), warn=warned.append)
+    assert devices == {}
+    assert warned
+    assert defaults == {"quality": 80}

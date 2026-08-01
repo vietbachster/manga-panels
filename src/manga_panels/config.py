@@ -48,8 +48,12 @@ def load_config(explicit_path: str | None = None, *, warn=print) -> tuple[dict, 
     except (tomllib.TOMLDecodeError, OSError) as e:
         raise MangaPanelsError(f"invalid config ({path}): {e}") from e
     defaults = _section(data.get("defaults", {}), "", _KNOWN, warn)
+    devices_raw = data.get("device", {})
+    if not isinstance(devices_raw, dict):
+        warn("config: [device] is not a table of device profiles, ignored")
+        devices_raw = {}
     devices: dict = {}
-    for name, table in data.get("device", {}).items():
+    for name, table in devices_raw.items():
         if not isinstance(table, dict):
             warn(f"config: [device.{name}] is not a table, ignored")
             continue
