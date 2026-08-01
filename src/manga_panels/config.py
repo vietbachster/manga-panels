@@ -1,4 +1,5 @@
-"""Load defaults from a manga-panels.toml ([defaults] table). The CLI wins."""
+"""Load defaults from a manga-panels.toml ([defaults] plus [device.<name>] tables).
+The CLI wins."""
 from __future__ import annotations
 
 import tomllib
@@ -18,7 +19,22 @@ _DISCOVER = [
 ]
 
 
-def load_config(explicit_path: str | None = None, *, warn=print) -> dict:
+def _section(table: dict, label: str, known: set[str], warn) -> dict:
+    """One TOML table -> argparse dests, dropping what we don't know with a warning.
+    `label` names the section in that warning, so a typo in [device.x4] doesn't read
+    like a typo in [defaults]."""
+    out: dict = {}
+    for k, v in table.items():
+        key = k.replace("-", "_")
+        if key in known:
+            out[key] = v
+        else:
+            warn(f"config: unknown key ignored: {label}{k}")
+    return out
+
+
+def load_config(explicit_path: str | None = None, *, warn=print) -> tuple[dict, dict]:
+    """Returns ([defaults], {device_name: {dest: value}}) from one read of the file."""
     if explicit_path is not None:
         path = Path(explicit_path)
         if not path.exists():
@@ -26,16 +42,17 @@ def load_config(explicit_path: str | None = None, *, warn=print) -> dict:
     else:
         path = next((p for p in _DISCOVER if p.exists()), None)
         if path is None:
-            return {}
+            return {}, {}
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, OSError) as e:
         raise MangaPanelsError(f"invalid config ({path}): {e}") from e
-    out: dict = {}
-    for k, v in data.get("defaults", {}).items():
-        key = k.replace("-", "_")
-        if key in _KNOWN:
-            out[key] = v
-        else:
-            warn(f"config: unknown key ignored: {k}")
-    return out
+    defaults = _section(data.get("defaults", {}), "", _KNOWN, warn)
+    devices: dict = {}
+    for name, table in data.get("device", {}).items():
+        if not isinstance(table, dict):
+            warn(f"config: [device.{name}] is not a table, ignored")
+            continue
+        # a device section setting `device` would only point at another profile
+        devices[name] = _section(table, f"[device.{name}] ", _KNOWN - {"device"}, warn)
+    return defaults, devices

@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg_arg, _ = pre.parse_known_args(argv)
     ap = _build_parser()
     try:
-        cfg = load_config(cfg_arg.config, warn=lambda m: console.print(f"[yellow]{escape(m)}[/]"))
+        cfg, _ = load_config(cfg_arg.config, warn=lambda m: console.print(f"[yellow]{escape(m)}[/]"))
     except MangaPanelsError as e:
         console.print(f"[red]error:[/] {escape(str(e))}")
         return 1
