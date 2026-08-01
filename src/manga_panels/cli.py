@@ -19,16 +19,26 @@ from manga_panels.pipeline import process_archive
 from manga_panels.preview import preview_archive
 
 _EXTS = {".cbz", ".cbr", ".zip", ".rar"}
-# screen-width presets for --device (a shortcut for --max-width)
+# --device profiles: name -> argparse dests. A profile carries what the HARDWARE
+# demands, so someone who owns the reader gets a working file without fiddling.
+# Personal taste (format on a big screen, quality, gamma) belongs in the user's
+# manga-panels.toml, not here.
 _DEVICES = {
-    "x4": 480,           # Xteink X4 (4.3", 800x480) — pair with --rotate-wide/--pad-aspect
-    "basic": 1072,       # Kindle basic / Kobo Clara / Boox Poke (6")
-    "pw11": 1236,        # Kindle Paperwhite 11th gen (6.8")
-    "paperwhite": 1264,  # Paperwhite 12th / Oasis / Kobo Libra / Boox Page (7")
-    "sage": 1440,        # Kobo Sage (8")
-    "tablet": 1404,      # Boox Note Air / reMarkable 2 / Kobo Elipsa (10.3")
-    "scribe": 1860,      # Kindle Scribe (10.2")
-    "phone": 1080,
+    # Xteink X4 (4.3", 800x480, ESP32-C3): reads neither cbz nor pdf, never scales
+    # up, centres only horizontally, has 4 grey levels, and its indexer chokes on
+    # big files. `page off` because a whole manga page at 480px is unreadable.
+    # pad_aspect is the same "W:H" the flag takes — argparse runs a string default
+    # through type=, so it arrives parsed.
+    "x4": {"format": "epub", "max_width": 480, "upscale": True, "grayscale": True,
+           "quality": 75, "rotate_wide": 1.0, "pad_aspect": "3:5", "page": "off"},
+    # The rest: width only.
+    "basic": {"max_width": 1072},       # Kindle basic / Kobo Clara / Boox Poke (6")
+    "pw11": {"max_width": 1236},        # Kindle Paperwhite 11th gen (6.8")
+    "paperwhite": {"max_width": 1264},  # Paperwhite 12th / Oasis / Kobo Libra (7")
+    "sage": {"max_width": 1440},        # Kobo Sage (8")
+    "tablet": {"max_width": 1404},      # Boox Note Air / reMarkable 2 (10.3")
+    "scribe": {"max_width": 1860},      # Kindle Scribe (10.2")
+    "phone": {"max_width": 1080},
 }
 console = Console()
 
@@ -49,7 +59,7 @@ def _aspect(text: str) -> float:
     return fw / fh
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="manga-panels",
         description="Split manga pages into panels and repackage as CBZ.",
@@ -70,8 +80,9 @@ def _build_parser() -> argparse.ArgumentParser:
                        help="jpeg quality 1-95 (default 90)")
     g_out.add_argument("-w", "--max-width", type=int, default=None,
                        help="shrink images wider than N px (default: no limit)")
-    g_out.add_argument("--device", choices=sorted(_DEVICES),
-                       help="preset for --max-width by reader (e.g. paperwhite, scribe)")
+    g_out.add_argument("--device", choices=devices or sorted(_DEVICES),
+                       help="device profile: screen width, plus format and layout "
+                            "where the hardware demands it (e.g. x4, paperwhite)")
     g_out.add_argument("--grayscale", action="store_true",
                        help="convert panels to grayscale (smaller, native to e-ink)")
     g_out.add_argument("--gamma", type=float, default=1.0,
@@ -135,6 +146,8 @@ def _jobs(src: Path, output: str | None, suffix: str):
         return _pair(files, out_dir, suffix), None
     if not src.exists():
         return [], f"not found: {src}"
+    if output and Path(output).is_dir():   # matches the folder/library paths above
+        return _pair([src], Path(output), suffix), None
     out = Path(output) if output else src.with_name(f"{src.stem}{suffix}")
     return [(src, out)], None
 
@@ -153,25 +166,48 @@ def _summary(rows) -> Table:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # pre-parse --config to apply defaults before the final parse
+    # pre-parse --config and --device: the config names the extra device profiles
+    # the parser must accept, and the device decides the defaults — both have to be
+    # known before the real parse.
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--config")
+    # nargs="?": a bare --config/--device (no value) falls through to the real
+    # parser instead of the pre-parser dying first — that's what lets `-h --device`
+    # print the real help and `x.cbz --device` show the real usage line.
+    pre.add_argument("--config", nargs="?")
+    pre.add_argument("--device", nargs="?")
     cfg_arg, _ = pre.parse_known_args(argv)
-    ap = _build_parser()
     try:
-        cfg = load_config(cfg_arg.config, warn=lambda m: console.print(f"[yellow]{escape(m)}[/]"))
+        cfg, cfg_devices = load_config(
+            cfg_arg.config, warn=lambda m: console.print(f"[yellow]{escape(m)}[/]"))
     except MangaPanelsError as e:
         console.print(f"[red]error:[/] {escape(str(e))}")
         return 1
-    ap.set_defaults(**cfg)             # config < CLI flag
+    ap = _build_parser(sorted(_DEVICES.keys() | cfg_devices.keys()))
+    device = cfg_arg.device or cfg.get("device")
+    if not cfg_arg.device and device is not None:   # `not`: --device "" falls back too
+        # argparse checks a typed --device against its choices, but never a value
+        # that arrives through set_defaults; a silent typo here would process a
+        # whole volume at the wrong width.
+        if not isinstance(device, str) or (device not in _DEVICES
+                                           and device not in cfg_devices):
+            console.print(f"[red]error:[/] config: unknown device: {escape(str(device))}")
+            return 1
+    # A profile is what the hardware demands; [defaults] is personal taste, so it
+    # sits BELOW the profile — that keeps a `format = "pdf"` habit from leaking into
+    # a reader that cannot open a PDF. A typed flag beats both, because argparse
+    # only applies a default when the flag is absent.
+    profile = {**_DEVICES.get(device, {}), **cfg_devices.get(device, {})}
+    ap.set_defaults(**{**cfg, **profile})   # [defaults] < preset < [device.N] < flag
     args = ap.parse_args(argv)
+    if profile:            # a profile can flip --format; don't do that silently
+        shown = " ".join(f"{k.replace('_', '-')}={getattr(args, k)}"
+                         for k in sorted(profile))
+        console.print(f"[dim]device {escape(str(device))}: {escape(shown)}[/]")
 
-    # --max-width wins; else fall back to the --device preset
-    max_width = args.max_width if args.max_width is not None else _DEVICES.get(args.device)
     # upscale, rotate_wide and pad_aspect live in `common` (not just the
     # process_archive branch) because all three archive functions call pack(); a
     # one-sided param would make `--preview --upscale` a TypeError.
-    common = dict(fmt=args.format, quality=args.quality, max_width=max_width,
+    common = dict(fmt=args.format, quality=args.quality, max_width=args.max_width,
                   upscale=args.upscale, rotate_wide=args.rotate_wide,
                   pad_aspect=args.pad_aspect)
     ext = {"pdf": "pdf", "epub": "epub"}.get(args.format, "cbz")
@@ -206,6 +242,27 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.overwrite:
+        if args.preview or args.debug:
+            # both produce QA artefacts (annotated, uncropped pages) that the
+            # container check can't catch: same extension, but writing them back
+            # replaces the volume with something nobody wants to read.
+            console.print("[red]error:[/] --overwrite refused with --preview/--debug: "
+                          "they write annotated pages, not a readable volume")
+            return 1
+        # --device/--format/[defaults] can resolve to a container different from
+        # the source's (e.g. x4 -> epub); writing that under the source's own
+        # name would silently destroy it and leave a file the source's own
+        # extension no longer describes. Guard on the resolved ext, not on
+        # --device, so `--format epub --overwrite` and a config default are
+        # caught too. Exact suffix match (case-insensitive): a `.zip` source
+        # counts as a mismatch even though _EXTS treats it as a cbz to read.
+        mismatch = next((inp for inp, _ in jobs if inp.suffix.lower() != f".{ext}"), None)
+        if mismatch:
+            console.print(
+                f"[red]error:[/] --overwrite refused: {escape(mismatch.name)} "
+                f"is {escape(mismatch.suffix or '(no extension)')}, but the output "
+                f"would be .{ext}; drop --overwrite, or pass -o to write elsewhere")
+            return 1
         jobs = [(inp, inp) for inp, _ in jobs]      # replace sources in place
     else:
         clash = next((inp for inp, out in jobs if inp == out), None)

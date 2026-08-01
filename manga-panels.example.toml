@@ -25,9 +25,10 @@ quality = 90            # qualidade jpeg, 1..95 (só vale pra jpeg)
 #   1860 = Kindle Scribe (10.2")
 # max_width = 1264
 
-# Alternativa ao max_width: preset por leitor (basic/pw11/paperwhite/sage/tablet/
-# scribe/phone). Se max_width também estiver setado, ele vence.
-# device = "paperwhite"
+# Perfil do aparelho: NÃO é só a largura. Em leitores grandes o preset traz só o
+# max_width; no Xteink X4 traz também format/upscale/pad-aspect/page, que o hardware
+# exige (ele não abre cbz nem pdf, nunca amplia e centraliza só na horizontal).
+# device = "x4"
 
 # e-ink: tons de cinza (menor, nativo do e-paper) e gamma pra escurecer os
 # meios-tons (>1 = mais contraste; 1.0 = off). Só afetam a saída processada.
@@ -54,3 +55,18 @@ overwrite = false
 
 # Saída padrão (arquivo ou pasta). Geralmente melhor passar -o na linha de comando.
 # output = "./saida"
+
+# ---------------------------------------------------------------------------
+# Ajustes por aparelho. O preset embutido vence o [defaults] acima — é o que
+# impede o `format = "jpeg"` daqui de virar um arquivo que o X4 não abre. Sua
+# seção [device.NOME] vence o preset, e uma flag na linha de comando vence tudo.
+# ---------------------------------------------------------------------------
+
+# [device.x4]
+# quality = 80          # o preset usa 75
+# output  = "/mnt/sd/manga"
+
+# Um nome que a tool não conhece também vale: vira opção de --device.
+# [device.mykobo]
+# max_width = 1264
+# grayscale = true

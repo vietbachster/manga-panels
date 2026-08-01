@@ -473,6 +473,20 @@ def test_cli_custom_suffix(tmp_path):
     assert (tmp_path / "ch_cut.cbz").exists()
 
 
+def test_cli_single_file_dash_o_existing_dir_lands_inside_it(tmp_path):
+    # -o naming a directory that already exists must behave like the folder-batch
+    # and library paths (output = a directory to write into), not like a literal
+    # output file name -- otherwise `[device.x4] output = "/mnt/sd/manga"` plus a
+    # single-file run writes the whole volume AS the file "manga".
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    out_dir = tmp_path / "existing"
+    out_dir.mkdir()
+    assert main([str(src), "-o", str(out_dir)]) == 0
+    assert (out_dir / "ch_panels.cbz").exists()
+
+
 def test_cli_overwrite_replaces_source(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
@@ -490,6 +504,31 @@ def test_cli_empty_suffix_refuses_to_clobber_source(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--suffix", ""]) != 0    # out == source -> refuse
     assert len(unpack(src)) == 1                     # untouched
+
+
+def test_cli_overwrite_refuses_when_format_changes_the_container(tmp_path):
+    # --device x4 implies --format epub; writing that under the .cbz source's own
+    # name would destroy a CBZ and leave an EPUB the user's reader won't open,
+    # while still reporting OK. Must refuse instead, and leave the source untouched.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    before = src.read_bytes()
+    assert main([str(src), "--device", "x4", "--overwrite"]) == 1
+    assert src.read_bytes() == before               # byte-identical: nothing written
+
+
+def test_cli_overwrite_refuses_preview_and_debug(tmp_path):
+    # same container, so the extension check lets these through: --preview/--debug
+    # write annotated, uncropped pages, and writing those back replaces the volume
+    # with a QA artefact. Silent, and the summary would say OK.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    before = src.read_bytes()
+    assert main([str(src), "--preview", "--overwrite"]) == 1
+    assert main([str(src), "--debug", "--overwrite"]) == 1
+    assert src.read_bytes() == before
 
 
 def test_cli_config_defaults_applied_and_cli_wins(tmp_path):
@@ -621,6 +660,205 @@ def test_cli_rejects_a_negative_rotate_wide(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--rotate-wide", "-1"]) == 1
     assert main([str(src), "--rotate-wide", "nan"]) == 1
+
+
+def _capture(monkeypatch):
+    """Replace process_archive with a spy; returns the dict it fills with kwargs."""
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out, fmt=kw.get("fmt", "jpeg"))
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    return captured
+
+
+def _src(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    return str(src)
+
+
+def test_cli_device_x4_is_a_full_profile(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4"]) == 0
+    assert captured["fmt"] == "epub"
+    assert captured["max_width"] == 480
+    assert captured["upscale"] is True
+    assert captured["grayscale"] is True
+    assert captured["quality"] == 75
+    assert captured["rotate_wide"] == 1.0
+    assert captured["page_pos"] == "off"
+    # "3:5" in the preset: argparse runs a string default through type=_aspect
+    assert captured["pad_aspect"] == 0.6
+    assert (tmp_path / "ch_panels.epub").exists()      # the name follows the format
+
+
+def test_cli_width_only_preset_changes_nothing_else(tmp_path, monkeypatch):
+    # a big screen dictates width and nothing more; format/quality stay personal
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "paperwhite"]) == 0
+    assert captured["max_width"] == 1264
+    assert captured["fmt"] == "jpeg"
+    assert captured["quality"] == 90
+    assert captured["page_pos"] == "before"
+    assert captured["grayscale"] is False
+
+
+def test_cli_flag_beats_device_preset(tmp_path, monkeypatch):
+    import pytest
+    pytest.importorskip("img2pdf")
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4", "--format", "pdf",
+                 "--quality", "90"]) == 0
+    assert captured["fmt"] == "pdf" and captured["quality"] == 90
+
+
+def test_cli_device_preset_beats_defaults_section(tmp_path, monkeypatch):
+    # the surprising half of the chain, and the one that protects the format
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\nquality = 85\nformat = "pdf"\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "x4"]) == 0
+    assert captured["quality"] == 75 and captured["fmt"] == "epub"
+
+
+def test_cli_defaults_section_still_wins_without_a_device(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\nquality = 85\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 0
+    assert captured["quality"] == 85
+
+
+def test_cli_device_config_beats_the_built_in_preset(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[device.x4]\nquality = 80\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "x4"]) == 0
+    assert captured["quality"] == 80        # tuned
+    assert captured["fmt"] == "epub"        # the rest of the preset survives
+
+
+def test_cli_device_can_come_from_the_defaults_section(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = "x4"\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 0
+    assert captured["max_width"] == 480 and captured["fmt"] == "epub"
+
+
+def test_cli_accepts_a_device_defined_only_in_the_config(tmp_path, monkeypatch):
+    # a name the tool doesn't ship must be a valid --device choice, or the file
+    # would accept what the command line refuses
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[device.mykobo]\nmax_width = 999\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "mykobo"]) == 0
+    assert captured["max_width"] == 999
+
+
+def test_cli_rejects_an_unknown_device(tmp_path):
+    import pytest
+    from manga_panels.cli import main
+    with pytest.raises(SystemExit) as e:
+        main([_src(tmp_path), "--device", "bogus"])
+    assert e.value.code == 2
+
+
+def test_cli_config_typo_in_device_name_is_rejected(tmp_path, monkeypatch):
+    # a typo in [defaults].device never reaches argparse's choices check (it
+    # arrives through set_defaults), so it must be validated by hand -- silently
+    # ignoring it would process a whole volume at the wrong width
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = "papermhite"\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 1
+    assert captured == {}      # process_archive (the spy) was never reached
+
+
+def test_cli_config_device_as_a_list_is_rejected_cleanly(tmp_path):
+    # [defaults]\ndevice = ["x4"] (a list, or an inline table) must not raise a
+    # raw TypeError out of the CLI -- known failures are a clean message
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = ["x4"]\n')
+    assert main([_src(tmp_path), "--config", str(cfg)]) == 1
+
+
+def test_cli_device_feedback_line_reads_from_args_not_profile(tmp_path, monkeypatch, capsys):
+    # the printed "device x4: ..." line must show the value the user actually got,
+    # not the profile's own number -- otherwise an override reads as silently ignored
+    from manga_panels.cli import main
+    _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4", "--max-width", "800"]) == 0
+    assert "max-width=800" in capsys.readouterr().out
+
+
+def test_cli_typed_max_width_beats_device_preset(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x4", "--max-width", "800"]) == 0
+    assert captured["max_width"] == 800
+    assert captured["fmt"] == "epub"        # the rest of the preset survives
+
+
+def test_cli_defaults_section_fills_a_gap_under_an_active_profile(tmp_path, monkeypatch):
+    # paperwhite's profile sets only max_width; [defaults] must still supply gamma
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text("[defaults]\ngamma = 1.8\n")
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "paperwhite"]) == 0
+    assert captured["gamma"] == 1.8
+    assert captured["max_width"] == 1264
+
+
+def test_cli_typed_device_beats_defaults_section_device(tmp_path, monkeypatch):
+    # a typed --device must win over [defaults] device, the same way any typed
+    # flag beats a config default -- otherwise a whole volume comes out at the
+    # config's width/format instead of the one asked for on the command line
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = "x4"\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "paperwhite"]) == 0
+    assert captured["max_width"] == 1264
+    assert captured["fmt"] == "jpeg"
+
+
+def test_cli_help_with_bare_device_flag_still_prints_help(tmp_path):
+    # nargs="?" on the pre-parser's --device: a bare `-h --device` (no value) must
+    # reach the REAL parser's -h, not die on the pre-parser's own "expected one
+    # argument" -- that's what makes `manga-panels -h --device` show the actual
+    # help instead of an unrelated usage error.
+    import pytest
+    from manga_panels.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["-h", "--device"])
+    assert e.value.code == 0
+
+
+def test_cli_empty_device_flag_still_hits_the_config_device_guard(tmp_path):
+    # --device "" must still fall back to the config's device (so the guard below
+    # can validate it) -- [defaults] device as a list is an invalid shape that
+    # must be rejected cleanly, not raise a raw TypeError from a dict lookup
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = ["x4"]\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", ""]) == 1
 
 
 def test_page_starts_marks_every_source_page(tmp_path, monkeypatch):
