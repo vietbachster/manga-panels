@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     ap = _build_parser(sorted(_DEVICES.keys() | cfg_devices.keys()))
     device = cfg_arg.device or cfg.get("device")
-    if cfg_arg.device is None and device is not None:
+    if not cfg_arg.device and device is not None:   # `not`: --device "" falls back too
         # argparse checks a typed --device against its choices, but never a value
         # that arrives through set_defaults; a silent typo here would process a
         # whole volume at the wrong width.
