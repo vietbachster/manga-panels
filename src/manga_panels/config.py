@@ -50,7 +50,8 @@ def load_config(explicit_path: str | None = None, *, warn=print) -> tuple[dict, 
     defaults = _section(data.get("defaults", {}), "", _KNOWN, warn)
     devices_raw = data.get("device", {})
     if not isinstance(devices_raw, dict):
-        warn("config: [device] is not a table of device profiles, ignored")
+        warn("config: [device] is not a table of device profiles, ignored "
+             '(a device name goes in [defaults] as `device = "x4"`)')
         devices_raw = {}
     devices: dict = {}
     for name, table in devices_raw.items():

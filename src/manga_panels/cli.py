@@ -146,6 +146,8 @@ def _jobs(src: Path, output: str | None, suffix: str):
         return _pair(files, out_dir, suffix), None
     if not src.exists():
         return [], f"not found: {src}"
+    if output and Path(output).is_dir():   # matches the folder/library paths above
+        return _pair([src], Path(output), suffix), None
     out = Path(output) if output else src.with_name(f"{src.stem}{suffix}")
     return [(src, out)], None
 
@@ -240,6 +242,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.overwrite:
+        # --device/--format/[defaults] can resolve to a container different from
+        # the source's (e.g. x4 -> epub); writing that under the source's own
+        # name would silently destroy it and leave a file the source's own
+        # extension no longer describes. Guard on the resolved ext, not on
+        # --device, so `--format epub --overwrite` and a config default are
+        # caught too. Exact suffix match (case-insensitive): a `.zip` source
+        # counts as a mismatch even though _EXTS treats it as a cbz to read.
+        mismatch = next((inp for inp, _ in jobs if inp.suffix.lower() != f".{ext}"), None)
+        if mismatch:
+            console.print(
+                f"[red]error:[/] --overwrite refused: {escape(mismatch.name)} "
+                f"is {escape(mismatch.suffix or '(no extension)')}, but the output "
+                f"would be .{ext}; drop --overwrite, or pass -o to write elsewhere")
+            return 1
         jobs = [(inp, inp) for inp, _ in jobs]      # replace sources in place
     else:
         clash = next((inp for inp, out in jobs if inp == out), None)

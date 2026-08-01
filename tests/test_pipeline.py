@@ -473,6 +473,20 @@ def test_cli_custom_suffix(tmp_path):
     assert (tmp_path / "ch_cut.cbz").exists()
 
 
+def test_cli_single_file_dash_o_existing_dir_lands_inside_it(tmp_path):
+    # -o naming a directory that already exists must behave like the folder-batch
+    # and library paths (output = a directory to write into), not like a literal
+    # output file name -- otherwise `[device.x4] output = "/mnt/sd/manga"` plus a
+    # single-file run writes the whole volume AS the file "manga".
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    out_dir = tmp_path / "existing"
+    out_dir.mkdir()
+    assert main([str(src), "-o", str(out_dir)]) == 0
+    assert (out_dir / "ch_panels.cbz").exists()
+
+
 def test_cli_overwrite_replaces_source(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
@@ -490,6 +504,18 @@ def test_cli_empty_suffix_refuses_to_clobber_source(tmp_path):
     pack([_grid_page()], src)
     assert main([str(src), "--suffix", ""]) != 0    # out == source -> refuse
     assert len(unpack(src)) == 1                     # untouched
+
+
+def test_cli_overwrite_refuses_when_format_changes_the_container(tmp_path):
+    # --device x4 implies --format epub; writing that under the .cbz source's own
+    # name would destroy a CBZ and leave an EPUB the user's reader won't open,
+    # while still reporting OK. Must refuse instead, and leave the source untouched.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    before = src.read_bytes()
+    assert main([str(src), "--device", "x4", "--overwrite"]) == 1
+    assert src.read_bytes() == before               # byte-identical: nothing written
 
 
 def test_cli_config_defaults_applied_and_cli_wins(tmp_path):
@@ -785,6 +811,41 @@ def test_cli_defaults_section_fills_a_gap_under_an_active_profile(tmp_path, monk
     assert main([_src(tmp_path), "--config", str(cfg), "--device", "paperwhite"]) == 0
     assert captured["gamma"] == 1.8
     assert captured["max_width"] == 1264
+
+
+def test_cli_typed_device_beats_defaults_section_device(tmp_path, monkeypatch):
+    # a typed --device must win over [defaults] device, the same way any typed
+    # flag beats a config default -- otherwise a whole volume comes out at the
+    # config's width/format instead of the one asked for on the command line
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = "x4"\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", "paperwhite"]) == 0
+    assert captured["max_width"] == 1264
+    assert captured["fmt"] == "jpeg"
+
+
+def test_cli_help_with_bare_device_flag_still_prints_help(tmp_path):
+    # nargs="?" on the pre-parser's --device: a bare `-h --device` (no value) must
+    # reach the REAL parser's -h, not die on the pre-parser's own "expected one
+    # argument" -- that's what makes `manga-panels -h --device` show the actual
+    # help instead of an unrelated usage error.
+    import pytest
+    from manga_panels.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["-h", "--device"])
+    assert e.value.code == 0
+
+
+def test_cli_empty_device_flag_still_hits_the_config_device_guard(tmp_path):
+    # --device "" must still fall back to the config's device (so the guard below
+    # can validate it) -- [defaults] device as a list is an invalid shape that
+    # must be rejected cleanly, not raise a raw TypeError from a dict lookup
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\ndevice = ["x4"]\n')
+    assert main([_src(tmp_path), "--config", str(cfg), "--device", ""]) == 1
 
 
 def test_page_starts_marks_every_source_page(tmp_path, monkeypatch):
