@@ -198,7 +198,7 @@ aparelho:
 | Celular | ~1080–1284 | `1080` |
 
 Valores aproximados (variam por modelo/ano). Na dúvida, `1264` cobre bem a maioria
-dos leitores de 6–7". Em vez de decorar o número, use o preset: `--device paperwhite`
+dos leitores de 6–7". Em vez de decorar o número, use o perfil: `--device paperwhite`
 (= `--max-width 1264`), `--device scribe`, etc.
 
 ### Xteink X4 (e outros leitores que só abrem EPUB)
