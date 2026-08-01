@@ -242,6 +242,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.overwrite:
+        if args.preview or args.debug:
+            # both produce QA artefacts (annotated, uncropped pages) that the
+            # container check can't catch: same extension, but writing them back
+            # replaces the volume with something nobody wants to read.
+            console.print("[red]error:[/] --overwrite refused with --preview/--debug: "
+                          "they write annotated pages, not a readable volume")
+            return 1
         # --device/--format/[defaults] can resolve to a container different from
         # the source's (e.g. x4 -> epub); writing that under the source's own
         # name would silently destroy it and leave a file the source's own

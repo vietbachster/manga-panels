@@ -518,6 +518,19 @@ def test_cli_overwrite_refuses_when_format_changes_the_container(tmp_path):
     assert src.read_bytes() == before               # byte-identical: nothing written
 
 
+def test_cli_overwrite_refuses_preview_and_debug(tmp_path):
+    # same container, so the extension check lets these through: --preview/--debug
+    # write annotated, uncropped pages, and writing those back replaces the volume
+    # with a QA artefact. Silent, and the summary would say OK.
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    before = src.read_bytes()
+    assert main([str(src), "--preview", "--overwrite"]) == 1
+    assert main([str(src), "--debug", "--overwrite"]) == 1
+    assert src.read_bytes() == before
+
+
 def test_cli_config_defaults_applied_and_cli_wins(tmp_path):
     from manga_panels.cli import main
     src = tmp_path / "ch.cbz"
