@@ -113,3 +113,22 @@ def test_top_level_device_scalar_is_ignored(tmp_path):
     assert devices == {}
     assert warned
     assert defaults == {"quality": 80}
+
+
+def test_example_toml_documents_every_config_key():
+    """The shipped example is the config's documentation, and it silently rotted
+    once already (7 flags missing). Both directions are checked: every key it
+    mentions must be real, and every real key must be mentioned."""
+    import re
+    import tomllib
+    from pathlib import Path
+    from manga_panels.config import _KNOWN
+
+    text = Path("manga-panels.example.toml").read_text(encoding="utf-8")
+    tomllib.loads(text)                                  # must stay parseable
+    # keys as written, live or commented out: `foo = ...` / `# foo = ...`
+    # a key starts with a letter — that skips the `#  1072 = Kindle basic` rows
+    # of the screen-width table, which are prose, not keys
+    mentioned = set(re.findall(r"^#?\s*([a-z_]\w*)\s*=", text, re.M))
+    assert mentioned <= _KNOWN, f"example documents unknown keys: {mentioned - _KNOWN}"
+    assert _KNOWN <= mentioned, f"example is missing: {_KNOWN - mentioned}"

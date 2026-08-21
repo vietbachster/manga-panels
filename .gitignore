@@ -22,4 +22,7 @@ CLAUDE.md
 AGENTS.md
 GEMINI.md
 .superpowers/
-docs/
+# docs/* e não docs/: git não re-inclui filho de diretório excluído, e as imagens
+# do README precisam ir pro repo (specs/plans em docs/superpowers/ seguem fora)
+docs/*
+!docs/images/

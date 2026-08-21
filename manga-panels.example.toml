@@ -1,72 +1,125 @@
-# manga-panels — exemplo de configuração.
+# manga-panels — example configuration.
 #
-# Copie pra `manga-panels.toml` (na pasta de onde você roda o comando) ou pra
-# `~/.config/manga-panels/config.toml`, e ajuste. As chaves são os nomes das
-# flags (`--max-width` -> `max_width`); qualquer flag na linha de comando sempre
-# vence o config. Descomente só o que você quer mudar — tudo tem default.
+# Copy it to `manga-panels.toml` (in the folder you run the command from) or to
+# `~/.config/manga-panels/config.toml`, and adjust. The keys are the flag names
+# (`--max-width` -> `max_width`); any flag on the command line always beats the
+# config. Uncomment only what you want to change — everything has a default.
 
 [defaults]
 
-# Pasta pra escanear quando você roda `manga-panels` SEM input: abre um menu
-# numerado pra navegar as subpastas e escolher os arquivos.
-# library = "/caminho/para/seus/mangas"
+# Folder to scan when you run `manga-panels` with NO input: opens a numbered menu
+# to walk the subfolders and pick files.
+# library = "/path/to/your/manga"
 
-# Saída: "jpeg"/"png" dentro de um cbz, ou "pdf" (um painel por página; pro Kindle
-# e leitores que só abrem PDF). O pdf precisa do extra: uv sync --extra pdf
+# Output: "jpeg"/"png" inside a cbz, "pdf" (one panel per page; for readers that
+# only open PDF), or "epub" (for readers that open neither, like the Xteink X4).
+# The pdf needs the extra: uv sync --extra pdf
 format = "jpeg"
-quality = 90            # qualidade jpeg, 1..95 (só vale pra jpeg)
+quality = 90            # jpeg quality, 1..95 (jpeg only)
 
-# Reduz imagens mais largas que N px (mantém proporção, nunca amplia). Use a
-# largura da tela do seu aparelho. Sem isso, mantém a resolução original.
-#   1072 = Kindle básico / Kobo Clara / Boox Poke (6")
-#   1236 = Kindle Paperwhite 11ª (6.8")
-#   1264 = Paperwhite 12ª / Oasis / Kobo Libra / Boox Page (7")  <- cobre a maioria
+# Shrink images wider than N px (keeps the ratio, never grows). Use your device's
+# screen width. Without it, the source resolution is kept.
+#   1072 = Kindle basic / Kobo Clara / Boox Poke (6")
+#   1236 = Kindle Paperwhite 11th (6.8")
+#   1264 = Paperwhite 12th / Oasis / Kobo Libra / Boox Page (7")  <- covers most
 #   1404 = Boox Note Air / reMarkable 2 / Kobo Elipsa (10.3")
 #   1860 = Kindle Scribe (10.2")
 # max_width = 1264
 
-# Perfil do aparelho: NÃO é só a largura. Em leitores grandes o preset traz só o
-# max_width; no Xteink X4 traz também format/upscale/pad-aspect/page, que o hardware
-# exige (ele não abre cbz nem pdf, nunca amplia e centraliza só na horizontal).
+# Device profile: NOT just the width. On big readers the preset carries only
+# max_width; on the Xteink X4 it also carries format/upscale/pad_aspect/page,
+# which that hardware demands (it opens neither cbz nor pdf, never scales up and
+# centres horizontally only).
 # device = "x4"
 
-# e-ink: tons de cinza (menor, nativo do e-paper) e gamma pra escurecer os
-# meios-tons (>1 = mais contraste; 1.0 = off). Só afetam a saída processada.
+# e-ink: grayscale (smaller, native to e-paper) and gamma to darken the midtones
+# (>1 = more contrast; 1.0 = off). If your reader adjusts contrast on its own
+# (KOReader does), leave gamma alone and do it there — it costs 2-4% in bytes and
+# bakes the change into the pixels.
 # grayscale = true
 # gamma = 1.8
 
-# Página-macro (a página inteira, pra ver o contexto antes dos painéis):
-#   "before" (default), "after" ou "off".
+# Macro page (the whole page, for context before its panels):
+#   "before" (default), "after" or "off".
 page = "before"
 
-# Mantém as primeiras N páginas inteiras (capa/folha de rosto), sem cortar.
+# Shrink ONLY the macro page, as a fraction of the panel width (1.0 = off). It is
+# context, not reading — and it is the most expensive image in the file (20% of
+# the images, 51% of the bytes). 0.6 takes ~23% off the file without touching a
+# single panel. Ignored under upscale, which would grow it back.
+# page_scale = 0.6
+
+# Language of the table-of-contents labels inside a PDF/EPUB ("Cover" / "Page N").
+# It follows the manga, not this CLI. Available: "en" (default), "pt".
+# lang = "pt"
+
+# Keep the first N pages whole (cover/front matter), uncut.
 keep_first = 0
 
-# Texto adicionado ao nome de saída (default "_panels" -> capitulo_panels.cbz).
+# --- geometry, for small screens ------------------------------------------
+# Grow images up to max_width too (the default only shrinks). Needed on readers
+# whose firmware never scales up, like the X4 — and pad_aspect does almost
+# nothing without it.
+# upscale = true
+
+# Pad with white to this width:height ratio, content centred. Fixes readers that
+# centre on one axis only: matching the screen's ratio leaves no slack to
+# mis-place. "3:5" is a 480x800 screen, "1264:1680" a Paperwhite.
+# pad_aspect = "3:5"
+
+# Rotate a panel wider than N:1 by 90° clockwise, to read with the device turned
+# (0 = never). On a 480px screen this is 2.3x the area.
+# rotate_wide = 1.0
+
+# Cut a panel wider than N:1 into vertical slices, read right to left; the whole
+# panel comes before its slices (0 = never). Tested on the X4 and dropped there:
+# each slice is one more page turn. rotate_wide replaced it.
+# split_ratio = 1.0
+
+# --- the cover (page 1 = the library thumbnail) ----------------------------
+# A specific image to put in as page 1.
+# cover = "cover.jpg"
+
+# Or make the cover out of a wide page 1 (a wraparound jacket): a fraction of the
+# width taken from cover_side, or a slice like "0.385:0.72" — a jacket is flap +
+# front + back, so the front cover is a middle band no edge fraction reaches.
+# The proportions change per volume, so check before running a whole one.
+# 0 turns it off.
+# cover_crop = "0.385:0.72"
+# cover_side = "left"
+
+# Right-to-left page turns in the EPUB (manga style). Off by default: one panel
+# per page has no spread to pair, so this only changes which edge advances the
+# book — the reading order is already inside the images.
+# rtl = false
+
+# --- output naming --------------------------------------------------------
+# Text appended to the output name (default "_panels" -> chapter_panels.cbz).
 suffix = "_panels"
 
-# Sobrescreve o arquivo original no lugar (DESTRUTIVO; grava num temp e troca).
+# Write back over the source file (DESTRUCTIVE; writes to a temp and swaps).
 overwrite = false
 
-# Sempre gerar preview (painéis desenhados) ou debug (tudo que o Magi vê) em vez
-# de processar. Normalmente é melhor usar as flags --preview/--debug pontualmente.
+# Always produce a preview (panels drawn) or a debug pass (everything Magi sees)
+# instead of processing. Usually better used as --preview/--debug when you need it.
 # preview = false
 # debug = false
 
-# Saída padrão (arquivo ou pasta). Geralmente melhor passar -o na linha de comando.
-# output = "./saida"
+# Default output (file or folder). Usually better passed as -o on the command line.
+# output = "./out"
 
 # ---------------------------------------------------------------------------
-# Ajustes por aparelho. O preset embutido vence o [defaults] acima — é o que
-# impede o `format = "jpeg"` daqui de virar um arquivo que o X4 não abre. Sua
-# seção [device.NOME] vence o preset, e uma flag na linha de comando vence tudo.
+# Per-device tweaks. The built-in preset beats the [defaults] above — that is
+# what stops the `format = "jpeg"` up there from producing a file the X4 cannot
+# open. Your [device.NAME] section beats the preset, and a command-line flag
+# beats everything.
 # ---------------------------------------------------------------------------
 
 # [device.x4]
-# quality = 80          # o preset usa 75
+# quality = 80          # the preset uses 75
 # output  = "/mnt/sd/manga"
 
-# Um nome que a tool não conhece também vale: vira opção de --device.
+# A name the tool doesn't know works too: it becomes a --device option.
 # [device.mykobo]
 # max_width = 1264
 # grayscale = true
