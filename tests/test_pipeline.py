@@ -4,6 +4,7 @@ from pathlib import Path
 from PIL import Image
 from manga_panels.pipeline import crop_panels, process_archive
 from manga_panels.archive import pack, unpack
+from manga_panels.errors import MangaPanelsError
 
 
 def _grid_page():
@@ -187,6 +188,55 @@ def test_keep_first_keeps_pages_whole(tmp_path):
     assert n == 6                                 # 1 (whole) + 5 (macro+4)
     imgs = unpack(out)
     assert imgs[0].size == (200, 200)             # 1st page whole, uncropped
+
+
+def _epub_nav(tmp_path, src_out, **kw):
+    out = tmp_path / "vol.epub"
+    process_archive(src_out, out, fmt="epub", **kw)
+    with zipfile.ZipFile(out) as z:
+        return z.read("OEBPS/nav.xhtml").decode()
+
+
+def test_toc_labels_are_english_by_default(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    nav = _epub_nav(tmp_path, src)
+    assert "Page 1" in nav and "Página" not in nav
+
+
+def test_toc_labels_follow_lang(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    nav = _epub_nav(tmp_path, src, lang="pt")
+    assert "Página 1" in nav and "Page 1" not in nav
+
+
+def test_cover_label_follows_lang(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    cover = tmp_path / "c.png"
+    Image.new("RGB", (40, 60)).save(cover)
+    assert "Cover" in _epub_nav(tmp_path, src, cover=str(cover))
+    assert "Capa" in _epub_nav(tmp_path, src, cover=str(cover), lang="pt")
+
+
+def test_unknown_lang_raises(tmp_path):
+    import pytest
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    with pytest.raises(MangaPanelsError):
+        process_archive(src, tmp_path / "o.cbz", lang="klingon")
+
+
+def test_cli_rejects_unknown_lang_from_config(tmp_path):
+    # argparse enforces `choices` on a typed flag, but never on a value that
+    # arrives through set_defaults — the config has to be checked by hand
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[defaults]\nlang = "klingon"\n')
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--config", str(cfg)]) == 1
 
 
 def test_page_scale_shrinks_only_the_macro_page(tmp_path):
@@ -1048,7 +1098,7 @@ def test_page_starts_marks_every_source_page(tmp_path, monkeypatch):
     pack([_grid_page(), _grid_page()], src)      # 2 pages, 4 panels each
     process_archive(src, tmp_path / "out.cbz", page_pos="off")
     starts = captured["page_starts"]
-    assert [lbl for _, lbl in starts] == ["Página 1", "Página 2"]
+    assert [lbl for _, lbl in starts] == ["Page 1", "Page 2"]
     assert [i for i, _ in starts] == [0, 4]      # 4 panels before page 2 begins
 
 
@@ -1069,7 +1119,7 @@ def test_page_starts_labels_the_cover(tmp_path, monkeypatch):
     cov = tmp_path / "cov.png"
     Image.new("RGB", (20, 30)).save(cov)
     process_archive(src, tmp_path / "out.cbz", cover=str(cov), page_pos="off")
-    assert captured["page_starts"][0] == (0, "Capa")
+    assert captured["page_starts"][0] == (0, "Cover")
 
 
 def test_chapters_are_resolved_to_image_indices(tmp_path, monkeypatch):

@@ -11,6 +11,17 @@ from manga_panels.ml import MagiDetector
 from manga_panels.split import split_wide
 
 
+# The only user-facing strings this tool produces: the labels of the table of
+# contents inside a PDF/EPUB, which the reader sees on the device. They follow
+# the manga's language, not the CLI's — reading a Brazilian scanlation with a
+# "Page 12" index is the odd one out, not the other way round. A new language is
+# one line here; nothing else in the program is translated.
+LABELS = {
+    "en": {"cover": "Cover", "page": "Page {n}"},
+    "pt": {"cover": "Capa", "page": "Página {n}"},
+}
+
+
 def crop_panels(page: Image.Image, boxes: list[Box]) -> list[Image.Image]:
     return [page.crop((x, y, x + w, y + h)) for (x, y, w, h) in boxes]
 
@@ -65,7 +76,7 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     cover=None, cover_crop: float | Sequence[float] | None = None,
                     cover_side: str = "left",
                     split_ratio: float | None = None, page_scale: float = 1.0,
-                    upscale: bool = False,
+                    lang: str = "en", upscale: bool = False,
                     rotate_wide: float | None = None, pad_aspect: float | None = None,
                     rtl: bool = False,
                     warn: Callable[[str], None] | None = None,
@@ -78,12 +89,17 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     - split_ratio: cut panels wider than N:1 into vertical slices (None = off).
     - page_scale: shrink the macro page to this fraction of the panel width
       (1.0 = off). It is the biggest lever on file size there is.
+    - lang: language of the PDF/EPUB table-of-contents labels (see LABELS).
     - warn(msg): called when a ComicInfo chapter mark points outside the volume,
       or collides with another mark on the same page, or when page_scale is
       dropped because upscale would undo it.
     - on_page(done, total): called after each processed page (progress)."""
     if page_pos not in ("before", "after", "off"):
         raise ValueError(f"invalid page_pos: {page_pos!r} (use before/after/off)")
+    if lang not in LABELS:
+        raise MangaPanelsError(
+            f"unknown language: {lang!r} (available: {', '.join(sorted(LABELS))})")
+    label = LABELS[lang]
     # The macro page is context, not reading: it carries the page layout, and at a
     # reader's width its text is already too small to read — that is what the
     # panels are for. Measured on FMA vol 01, macro pages are 20% of the images
@@ -116,11 +132,11 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     if cover_img is None and cover_crop and pages:   # crop the front cover off a wide page 0
         cover_img = pages[0].crop(_cover_box(pages[0].size, cover_crop, cover_side))
     if cover_img is not None:                        # -> PDF page 1 / library thumbnail
-        page_starts.append((len(out_imgs), "Capa"))
+        page_starts.append((len(out_imgs), label["cover"]))
         out_imgs.append(cover_img)
     for i, page in enumerate(pages):
         page_at[i] = len(out_imgs)
-        page_starts.append((len(out_imgs), f"Página {i + 1}"))
+        page_starts.append((len(out_imgs), label["page"].format(n=i + 1)))
         if i < keep_first:                         # keep front matter whole
             out_imgs.append(page)
         else:

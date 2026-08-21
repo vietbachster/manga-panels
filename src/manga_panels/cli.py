@@ -15,7 +15,7 @@ from manga_panels.config import load_config
 from manga_panels.errors import MangaPanelsError
 from manga_panels.ml import MagiDetector
 from manga_panels.debug import debug_archive
-from manga_panels.pipeline import process_archive
+from manga_panels.pipeline import LABELS, process_archive
 from manga_panels.preview import preview_archive
 
 _EXTS = {".cbz", ".cbr", ".zip", ".rar"}
@@ -132,6 +132,9 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     g_lay = ap.add_argument_group("layout")
     g_lay.add_argument("--page", choices=["before", "after", "off"], default="before",
                        help="position of the macro page (default before)")
+    g_lay.add_argument("--lang", choices=sorted(LABELS), default="en",
+                       help="language of the PDF/EPUB table of contents (Cover / "
+                            "Page N) — it follows the manga, not this CLI (default en)")
     g_lay.add_argument("--page-scale", type=float, default=1.0, metavar="N",
                        help="shrink the macro page to N times the panel width — it "
                             "is context, not reading (try 0.6: ~30%% off the file; "
@@ -254,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
               "grayscale": args.grayscale, "gamma": args.gamma, "cover": args.cover,
               "cover_crop": args.cover_crop, "cover_side": args.cover_side,
               "split_ratio": args.split_ratio, "page_scale": args.page_scale,
+              "lang": args.lang,
               "warn": lambda m: console.print(f"[yellow]{escape(m)}[/]")}
         suffix = f"{args.suffix}.{ext}"
 
@@ -312,6 +316,14 @@ def main(argv: list[str] | None = None) -> int:
     # a device preset that enables splitting stays switchable from the command line.
     if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
         console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
+        return 1
+
+    # argparse checks `choices` on a typed flag but never on a value that arrives
+    # through set_defaults, so a typo in the config would otherwise only surface
+    # as a pipeline error after the model had finished loading.
+    if args.lang not in LABELS:
+        console.print(f"[red]error:[/] unknown lang: {escape(str(args.lang))} "
+                      f"(available: {', '.join(sorted(LABELS))})")
         return 1
 
     # validated here and not in the pipeline because a value out of the config or
