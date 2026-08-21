@@ -4,7 +4,7 @@ from typing import Callable, Sequence
 
 from PIL import Image
 
-from manga_panels.archive import load_image, pack, read_comicinfo, unpack
+from manga_panels.archive import _fit, load_image, pack, read_comicinfo, unpack
 from manga_panels.detect import Box
 from manga_panels.errors import MangaPanelsError
 from manga_panels.ml import MagiDetector
@@ -64,7 +64,8 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     keep_first: int = 0, grayscale: bool = False, gamma: float = 1.0,
                     cover=None, cover_crop: float | Sequence[float] | None = None,
                     cover_side: str = "left",
-                    split_ratio: float | None = None, upscale: bool = False,
+                    split_ratio: float | None = None, page_scale: float = 1.0,
+                    upscale: bool = False,
                     rotate_wide: float | None = None, pad_aspect: float | None = None,
                     rtl: bool = False,
                     warn: Callable[[str], None] | None = None,
@@ -75,11 +76,36 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
     - A page with <=1 panel (cover/splash) is emitted only once.
     - page_pos: 'before' (macro page before the panels), 'after', or 'off'.
     - split_ratio: cut panels wider than N:1 into vertical slices (None = off).
+    - page_scale: shrink the macro page to this fraction of the panel width
+      (1.0 = off). It is the biggest lever on file size there is.
     - warn(msg): called when a ComicInfo chapter mark points outside the volume,
-      or collides with another mark on the same page.
+      or collides with another mark on the same page, or when page_scale is
+      dropped because upscale would undo it.
     - on_page(done, total): called after each processed page (progress)."""
     if page_pos not in ("before", "after", "off"):
         raise ValueError(f"invalid page_pos: {page_pos!r} (use before/after/off)")
+    # The macro page is context, not reading: it carries the page layout, and at a
+    # reader's width its text is already too small to read — that is what the
+    # panels are for. Measured on FMA vol 01, macro pages are 20% of the images
+    # but 51% of the bytes (189 KB each vs 45 KB per panel), so shrinking only
+    # them is the cheapest lever there is: 0.6x takes ~30% off the whole volume,
+    # more than dropping every panel to q40 would.
+    if page_scale < 1 and upscale:
+        page_scale = 1.0        # pack() would grow it right back to max_width
+        if warn is not None:
+            warn("page_scale ignored: upscale grows the macro page back to "
+                 "max_width, so shrinking it here would only cost sharpness")
+
+    def macro(page: Image.Image) -> Image.Image:
+        # scale off the width the page would ACTUALLY have — min(max_width, its
+        # own), not max_width alone. A 765px scan under --device paperwhite (1264)
+        # never reaches 1264, so scaling off the ceiling would shrink it by the
+        # slack instead of by the factor asked for, and 0.6 would do nothing.
+        if page_scale >= 1:
+            return page
+        w = min(max_width, page.width) if max_width else page.width
+        return _fit(page, round(w * page_scale))
+
     det = MagiDetector()
     pages = unpack(in_path)
     total = len(pages)
@@ -111,11 +137,11 @@ def process_archive(in_path, out_path, *, fmt: str = "jpeg", quality: int = 90,
                     out_imgs.extend(_panel_imgs(page, whole, obstacles, split_ratio))
             else:
                 if page_pos == "before":
-                    out_imgs.append(page)
+                    out_imgs.append(macro(page))
                 for b in boxes:
                     out_imgs.extend(_panel_imgs(page, b, obstacles, split_ratio))
                 if page_pos == "after":
-                    out_imgs.append(page)
+                    out_imgs.append(macro(page))
         if on_page is not None:
             on_page(i + 1, total)
     meta = read_comicinfo(in_path)

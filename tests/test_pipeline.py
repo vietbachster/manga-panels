@@ -189,6 +189,67 @@ def test_keep_first_keeps_pages_whole(tmp_path):
     assert imgs[0].size == (200, 200)             # 1st page whole, uncropped
 
 
+def test_page_scale_shrinks_only_the_macro_page(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)                     # 200x200 page, 4 panels of 60x60
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, page_scale=0.5)
+    imgs = unpack(out)
+    assert imgs[0].size == (100, 100)             # macro halved
+    assert [im.size for im in imgs[1:]] == [(60, 60)] * 4   # panels untouched
+
+
+def test_page_scale_is_relative_to_the_effective_width(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)                     # 200x200
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, page_scale=0.5, max_width=100)
+    assert unpack(out)[0].size == (50, 50)        # capped at 100 first, then halved
+
+
+def test_page_scale_ignores_max_width_slack(tmp_path):
+    # the real-volume case: a scan narrower than the reader's screen. Scaling off
+    # max_width alone would consume the slack and shrink almost nothing.
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)                     # 200x200 page
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, page_scale=0.5, max_width=1264)
+    assert unpack(out)[0].size == (100, 100)      # 0.5 x 200, not 0.5 x 1264
+
+
+def test_page_scale_leaves_whole_page_output_alone(tmp_path):
+    # a page that yields <=1 panel is emitted whole: that image IS the reading,
+    # not a thumbnail of context, so page_scale must not touch it
+    src = tmp_path / "blank.cbz"
+    pack([Image.new("RGB", (100, 100), (255, 255, 255))], src)
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, page_scale=0.5)
+    assert unpack(out)[0].size == (100, 100)
+
+
+def test_page_scale_leaves_keep_first_alone(tmp_path):
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page(), _grid_page()], src)
+    out = tmp_path / "out.cbz"
+    process_archive(src, out, keep_first=1, page_scale=0.5)
+    imgs = unpack(out)
+    assert imgs[0].size == (200, 200)             # kept whole, at full size
+    assert imgs[1].size == (100, 100)             # page 2's macro is scaled
+
+
+def test_page_scale_skipped_under_upscale(tmp_path):
+    # pack() would grow the macro straight back to max_width, so shrinking it
+    # here only costs sharpness; warn instead of doing it silently
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    out = tmp_path / "out.cbz"
+    msgs = []
+    process_archive(src, out, page_scale=0.5, max_width=200, upscale=True,
+                    warn=msgs.append)
+    assert unpack(out)[0].size == (200, 200)
+    assert any("page_scale" in m or "page-scale" in m for m in msgs)
+
+
 def test_blank_page_falls_back_to_whole_page(tmp_path):
     src = tmp_path / "blank.cbz"
     pack([Image.new("RGB", (100, 100), (255, 255, 255))], src)
@@ -493,6 +554,32 @@ def test_cli_grayscale_output(tmp_path):
     with zipfile.ZipFile(tmp_path / "ch_panels.cbz") as z:
         raw = Image.open(io.BytesIO(z.read(z.namelist()[0])))
     assert raw.mode == "L"
+
+
+def test_cli_page_scale_reaches_the_pipeline(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    import manga_panels.cli as cli
+    captured = {}
+
+    def spy(in_path, out, *, on_page=None, **kw):
+        captured.update(kw)
+        pack([Image.new("RGB", (4, 4))], out)
+        return 1
+
+    monkeypatch.setattr(cli, "process_archive", spy)
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--page-scale", "0.6"]) == 0
+    assert captured["page_scale"] == 0.6
+
+
+def test_cli_rejects_bad_page_scale(tmp_path):
+    from manga_panels.cli import main
+    src = tmp_path / "ch.cbz"
+    pack([_grid_page()], src)
+    assert main([str(src), "--page-scale", "0"]) == 1
+    assert main([str(src), "--page-scale", "-0.5"]) == 1
+    assert main([str(src), "--page-scale", "1.5"]) == 1
 
 
 def test_cli_device_resolves_max_width(tmp_path, monkeypatch):

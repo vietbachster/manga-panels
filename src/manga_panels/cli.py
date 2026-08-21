@@ -132,6 +132,10 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     g_lay = ap.add_argument_group("layout")
     g_lay.add_argument("--page", choices=["before", "after", "off"], default="before",
                        help="position of the macro page (default before)")
+    g_lay.add_argument("--page-scale", type=float, default=1.0, metavar="N",
+                       help="shrink the macro page to N times the panel width — it "
+                            "is context, not reading (try 0.6: ~30%% off the file; "
+                            "1.0 = off)")
     g_lay.add_argument("-k", "--keep-first", type=int, default=0,
                        help="keep the first N pages whole")
     g_lay.add_argument("--cover",
@@ -249,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         kw = {**common, "page_pos": args.page, "keep_first": args.keep_first,
               "grayscale": args.grayscale, "gamma": args.gamma, "cover": args.cover,
               "cover_crop": args.cover_crop, "cover_side": args.cover_side,
-              "split_ratio": args.split_ratio,
+              "split_ratio": args.split_ratio, "page_scale": args.page_scale,
               "warn": lambda m: console.print(f"[yellow]{escape(m)}[/]")}
         suffix = f"{args.suffix}.{ext}"
 
@@ -308,6 +312,14 @@ def main(argv: list[str] | None = None) -> int:
     # a device preset that enables splitting stays switchable from the command line.
     if args.split_ratio is not None and not (args.split_ratio >= 0):  # rejects NaN too
         console.print("[red]error:[/] --split-ratio must be >= 0 (0 = never split)")
+        return 1
+
+    # validated here and not in the pipeline because a value out of the config or
+    # a device profile never passes through argparse's type= — and a negative one
+    # would reach PIL as a negative width.
+    if not (0 < args.page_scale <= 1):                 # rejects NaN too
+        console.print("[red]error:[/] --page-scale must be > 0 and <= 1 "
+                      "(1.0 = macro page at full width)")
         return 1
 
     if args.rotate_wide is not None and not (args.rotate_wide >= 0):   # rejects NaN too
