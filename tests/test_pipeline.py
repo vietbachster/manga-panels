@@ -606,6 +606,28 @@ def test_cli_grayscale_output(tmp_path):
     assert raw.mode == "L"
 
 
+def test_devices_lists_the_builtins_and_exits(capsys, monkeypatch):
+    # wide console: Rich would otherwise wrap the values and break the asserts
+    monkeypatch.setenv("COLUMNS", "200")
+    from manga_panels.cli import main
+    assert main(["--devices"]) == 0            # no input needed, no model loaded
+    out = capsys.readouterr().out
+    assert "paperwhite" in out and "1264" in out
+    assert "x4" in out and "epub" in out       # the profile that is more than a width
+
+
+def test_devices_includes_config_profiles(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    from manga_panels.cli import main
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[device.mesa]\nmax_width = 1600\n'
+                   '[device.paperwhite]\nquality = 78\n')
+    assert main(["--devices", "--config", str(cfg)]) == 0
+    out = capsys.readouterr().out
+    assert "mesa" in out and "1600" in out               # a name the tool never knew
+    assert "1264" in out and "78" in out                 # preset merged with the config
+
+
 def test_cli_page_scale_reaches_the_pipeline(tmp_path, monkeypatch):
     from manga_panels.cli import main
     import manga_panels.cli as cli

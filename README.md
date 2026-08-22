@@ -149,6 +149,14 @@ Most specific to least: **typed flag** > `[device.NAME]` > **built-in preset** >
 what stops an everyday `format = "pdf"` from producing a file the X4 cannot open.
 When a profile is applied, the tool prints what it did.
 
+Any name you like works — a `[device.NAME]` the tool has never heard of becomes a
+valid `--device` option, and one that matches a built-in is merged over it. To see
+what they all resolve to, yours included:
+
+```bash
+manga-panels --devices
+```
+
 ## Check the cuts before a whole volume
 
 `--preview` writes a CBZ with the panels drawn and numbered in reading order,
@@ -184,6 +192,7 @@ All of them in `manga-panels --help`; any of them beats the config.
 
 | flag | what it does |
 |---|---|
+| `--devices` | list every device profile (built-in and from your config) with what it sets, and exit |
 | `--preview` | `<stem>_preview.cbz` with panels drawn/numbered (check the cuts) |
 | `--debug` | `<stem>_debug.cbz` with everything Magi sees (characters, bubbles, speakers) |
 | `--device x4` | device profile: screen width **plus format and layout** where the hardware demands it (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |

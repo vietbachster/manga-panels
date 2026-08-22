@@ -147,6 +147,14 @@ embutido** > `[defaults]` > default. O `[defaults]` fica abaixo do preset de
 propósito — é o que impede um `format = "pdf"` do dia a dia de virar um arquivo
 que o X4 não abre. Quando um perfil é aplicado, a tool imprime o que ele fez.
 
+Qualquer nome serve — um `[device.NOME]` que a tool nunca ouviu falar vira uma
+opção válida de `--device`, e um que coincida com um embutido é mesclado por cima
+dele. Pra ver no que todos resolvem, inclusive os seus:
+
+```bash
+manga-panels --devices
+```
+
 ## Conferir os cortes antes do volume inteiro
 
 `--preview` gera um CBZ com os painéis desenhados e numerados na ordem de
@@ -182,6 +190,7 @@ Todas em `manga-panels --help`; qualquer uma vence o config.
 
 | flag | o que faz |
 |---|---|
+| `--devices` | lista os perfis de aparelho (embutidos e do seu config) com o que cada um define, e sai |
 | `--preview` | `<stem>_preview.cbz` com os painéis desenhados/numerados (confere os cortes) |
 | `--debug` | `<stem>_debug.cbz` com tudo que o Magi vê (personagens, balões, quem fala) |
 | `--device x4` | perfil do aparelho: largura da tela **+ formato e layout** onde o hardware exige (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |

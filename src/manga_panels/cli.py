@@ -94,6 +94,9 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     ap.add_argument("--config", help="TOML defaults (default: ./manga-panels.toml)")
     ap.add_argument("-L", "--library",
                     help="folder to browse and pick from when no input is given")
+    ap.add_argument("--devices", action="store_true",
+                    help="list the device profiles (built-in and from your config) "
+                         "with what each one sets, and exit")
 
     g_out = ap.add_argument_group("output")
     g_out.add_argument("-f", "--format", default="jpeg",
@@ -159,6 +162,28 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
     return ap
 
 
+def _devices_table(cfg_devices: dict) -> Table:
+    """What every profile resolves to — built-ins and the ones from the config,
+    merged the same way `main` merges them, with the config's own values in bold.
+
+    Built from _DEVICES/cfg_devices themselves rather than written down, because
+    a list of profiles kept by hand somewhere else is a list that goes stale."""
+    t = Table(title="device profiles", title_style="bold")
+    t.add_column("--device")
+    t.add_column("from")
+    t.add_column("sets")
+    for name in sorted(_DEVICES.keys() | cfg_devices.keys()):
+        preset, mine = _DEVICES.get(name, {}), cfg_devices.get(name, {})
+        origin = "built-in" if not mine else "config" if not preset else "both"
+        # a config value beats the preset — same precedence the run itself uses
+        sets = "  ".join(
+            f"[bold]{escape(k.replace('_', '-'))}={escape(str(v))}[/]" if k in mine
+            else f"{escape(k.replace('_', '-'))}={escape(str(v))}"
+            for k, v in sorted({**preset, **mine}.items()))
+        t.add_row(escape(name), origin, sets)
+    return t
+
+
 def _pair(files, out_dir: Path, suffix: str):
     """Map each source file to a unique out_dir/<stem><suffix> (de-dupes stems)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -211,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     # print the real help and `x.cbz --device` show the real usage line.
     pre.add_argument("--config", nargs="?")
     pre.add_argument("--device", nargs="?")
+    pre.add_argument("--devices", action="store_true")
     cfg_arg, _ = pre.parse_known_args(argv)
     try:
         cfg, cfg_devices = load_config(
@@ -219,6 +245,12 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"[red]error:[/] {escape(str(e))}")
         return 1
     ap = _build_parser(sorted(_DEVICES.keys() | cfg_devices.keys()))
+    if cfg_arg.devices:
+        # answered before the precedence below runs: listing what profiles exist
+        # has to work even when the config names a device that does not — that
+        # is exactly when you need the list
+        console.print(_devices_table(cfg_devices))
+        return 0
     device = cfg_arg.device or cfg.get("device")
     if not cfg_arg.device and device is not None:   # `not`: --device "" falls back too
         # argparse checks a typed --device against its choices, but never a value
