@@ -5,7 +5,9 @@
 Cut manga pages (CBZ/CBR) into **panels** and repack them as a new CBZ — one
 panel per page — so a small screen is comfortable to read on.
 
-![A source page on the left, the panels it was cut into on the right, in reading order](docs/images/panels.jpg)
+<p align="center">
+  <img src="docs/images/panels.jpg" width="680" alt="A source page on the left; an arrow; on the right the nine panels it was cut into, with arrows tracing the reading order through them">
+</p>
 
 - Detection by **Magi v2**, a transformer trained on manga: it handles action
   pages, bleeds and non-rectangular layouts, not just a clean grid.
@@ -156,17 +158,21 @@ without cutting anything:
 manga-panels chapter.cbz --preview
 ```
 
-<img src="docs/images/preview.jpg" width="380" alt="A page with its panels outlined and numbered 0 to 3 in reading order">
+<p align="center">
+  <img src="docs/images/preview.jpg" width="300" alt="A page with its panels outlined and numbered 0 to 8 in reading order">
+</p>
 
-Note the numbering: **0** at the top, then **1** on the right, **2** on the left,
-**3** at the bottom. That is right-to-left order, and it comes from the model —
-the pipeline never re-sorts it.
+Follow the numbers: **0** across the top, **1** down the tall right-hand column,
+then each tier read right to left, ending at **8** on the bottom left. That is
+manga order, and it comes from the model — the pipeline never re-sorts it.
 
 To see **everything** Magi understands — panels, characters (coloured per
 identity), speech bubbles coloured by who says them, and SFX marked — use
 `--debug`, which writes `<stem>_debug.cbz`. It is for inspection, not reading.
 
-<img src="docs/images/debug.jpg" width="380" alt="The same page with the full Magi overlay: panels, characters, texts and speaker links">
+<p align="center">
+  <img src="docs/images/debug.jpg" width="300" alt="The same page with the full Magi overlay: panels, characters, texts and speaker links">
+</p>
 
 This is also why the crops look right: a cut **includes the bubble that spills
 out** of its panel and the **character who is speaking**, because Magi detects
@@ -256,11 +262,13 @@ vol. 01 (973 images), macro pages are **20% of the images and 51% of the bytes**
 
 `--page-scale` shrinks **only that page**, as a fraction of the panel width:
 
-![The same macro page at full width and at 0.6, side by side](docs/images/page-scale.jpg)
+<p align="center">
+  <img src="docs/images/page-scale.jpg" width="460" alt="The same macro page at full width and at 0.6, side by side">
+</p>
 
-*Left: `--page-scale 1.0` (664×1100, 163 KB). Right: `0.6` (398×659, 68 KB) —
-still perfectly good at what it exists for: layout, reading order, the weight of
-the page.*
+<p align="center"><em>Left: <code>--page-scale 1.0</code> (679×1100, 190 KB).
+Right: <code>0.6</code> (407×659, 82 KB) — still perfectly good at what it exists
+for: layout, reading order, the weight of the page.</em></p>
 
 | macro page treatment | volume | saved |
 |---|---|---|

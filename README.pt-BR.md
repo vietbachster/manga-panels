@@ -5,7 +5,9 @@
 Corta páginas de mangá (CBZ/CBR) em **painéis** e reempacota como um CBZ novo —
 um painel por página — pra ler confortável em tela pequena.
 
-![A página fonte à esquerda, os painéis em que ela foi cortada à direita, na ordem de leitura](docs/images/panels.jpg)
+<p align="center">
+  <img src="docs/images/panels.jpg" width="680" alt="A página fonte à esquerda; uma seta; à direita os nove painéis em que ela foi cortada, com setas traçando a ordem de leitura entre eles">
+</p>
 
 - Detecção com **Magi v2**, um transformer treinado em mangá: resolve páginas de
   ação, sangradas e não-retangulares, não só grid limpo.
@@ -154,17 +156,21 @@ leitura, sem cortar nada:
 manga-panels capitulo.cbz --preview
 ```
 
-<img src="docs/images/preview.jpg" width="380" alt="Uma página com os painéis contornados e numerados de 0 a 3 na ordem de leitura">
+<p align="center">
+  <img src="docs/images/preview.jpg" width="300" alt="Uma página com os painéis contornados e numerados de 0 a 8 na ordem de leitura">
+</p>
 
-Repare na numeração: **0** em cima, depois **1** à direita, **2** à esquerda,
-**3** embaixo. Isso é a ordem direita→esquerda, e ela vem do modelo — o pipeline
-nunca reordena.
+Siga os números: **0** atravessa o topo, **1** desce a coluna alta da direita, e
+daí cada faixa é lida da direita pra esquerda, terminando no **8** embaixo à
+esquerda. Isso é ordem de mangá, e vem do modelo — o pipeline nunca reordena.
 
 Pra ver **tudo** que o Magi entende — painéis, personagens (coloridos por
 identidade), balões coloridos por quem fala e SFX marcado — use `--debug`, que
 gera `<stem>_debug.cbz`. É pra inspeção/QA, não pra ler.
 
-<img src="docs/images/debug.jpg" width="380" alt="A mesma página com o overlay completo do Magi: painéis, personagens, textos e ligação com quem fala">
+<p align="center">
+  <img src="docs/images/debug.jpg" width="300" alt="A mesma página com o overlay completo do Magi: painéis, personagens, textos e ligação com quem fala">
+</p>
 
 É por isso também que os cortes saem certos: o corte **inclui o balão que vaza**
 do painel e o **personagem que está falando**, porque o Magi detecta texto e
@@ -255,11 +261,13 @@ contra 45 KB por painel).
 
 `--page-scale` encolhe **só ela**, em fração da largura dos painéis:
 
-![A mesma página macro em largura cheia e em 0.6, lado a lado](docs/images/page-scale.jpg)
+<p align="center">
+  <img src="docs/images/page-scale.jpg" width="460" alt="A mesma página macro em largura cheia e em 0.6, lado a lado">
+</p>
 
-*Esquerda: `--page-scale 1.0` (664×1100, 163 KB). Direita: `0.6` (398×659, 68 KB)
-— ainda perfeita no que ela existe pra fazer: layout, ordem de leitura, o peso da
-página.*
+<p align="center"><em>Esquerda: <code>--page-scale 1.0</code> (679×1100, 190 KB).
+Direita: <code>0.6</code> (407×659, 82 KB) — ainda perfeita no que ela existe pra
+fazer: layout, ordem de leitura, o peso da página.</em></p>
 
 | tratamento da macro | volume | economia |
 |---|---|---|
