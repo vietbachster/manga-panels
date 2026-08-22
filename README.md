@@ -99,7 +99,8 @@ page_scale = 0.6                     # shrink only that whole page: ~23% off the
 ```
 
 With that, run it **with no arguments** and pick what to process from a menu —
-it walks into series subfolders and you select the volumes:
+it walks into series subfolders and you select the volumes (no config? point at
+the folder with `-L`/`--library`):
 
 ```bash
 manga-panels -o ~/output
@@ -188,7 +189,9 @@ text and people, not just frames.
 
 ## All flags
 
-All of them in `manga-panels --help`; any of them beats the config.
+All of them in `manga-panels --help`; any of them beats the config. Six have a
+short form: `-o` output, `-L` library, `-f` format, `-q` quality, `-w` max-width,
+`-k` keep-first.
 
 | flag | what it does |
 |---|---|
@@ -196,11 +199,11 @@ All of them in `manga-panels --help`; any of them beats the config.
 | `--preview` | `<stem>_preview.cbz` with panels drawn/numbered (check the cuts) |
 | `--debug` | `<stem>_debug.cbz` with everything Magi sees (characters, bubbles, speakers) |
 | `--device x4` | device profile: screen width **plus format and layout** where the hardware demands it (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
-| `--max-width 1264` | shrink anything wider than N px (keeps the ratio, never grows) |
+| `-w`, `--max-width 1264` | shrink anything wider than N px (keeps the ratio, never grows) |
 | `--grayscale` | grayscale — smaller and native to e-ink |
 | `--gamma 1.8` | darken midtones for e-ink (more contrast; `1.0` = off) |
-| `--quality 85` | JPEG quality, 1–95 |
-| `--format pdf\|epub\|png` | container/codec (default: JPEG inside a CBZ) |
+| `-q`, `--quality 85` | JPEG quality, 1–95 |
+| `-f`, `--format pdf\|epub\|png` | container/codec (default: JPEG inside a CBZ) |
 | `--upscale` | also **grow** images up to `--max-width` (default only shrinks) |
 | `--rotate-wide 1.0` | rotate a panel wider than N:1 by 90° clockwise, to read with the device turned; `0` = never |
 | `--pad-aspect 3:5` | pad with white to this ratio, content centred |
@@ -208,7 +211,7 @@ All of them in `manga-panels --help`; any of them beats the config.
 | `--lang en\|pt` | language of the PDF/EPUB table of contents (`Cover` / `Page N`) — default `en` |
 | `--page-scale 0.6` | shrink **only the macro page** to N× the panel width (~23% off the file); `1.0` = off |
 | `--split-ratio 1.0` | cut a panel wider than N:1 into vertical slices, read right to left; the whole panel comes before its slices |
-| `--keep-first N` | keep the first N pages whole (cover/front matter) |
+| `-k`, `--keep-first N` | keep the first N pages whole (cover/front matter) |
 | `--cover img.jpg` | put this image in as page 1 — the PDF/library **thumbnail** |
 | `--cover-crop 0.4` | make the cover from a **wide page 1** (wraparound): a fraction of the width (with `--cover-side left/right`), or a slice, `0.385:0.72` |
 | `--rtl` | right-to-left page turns in the EPUB (manga style); default is left-to-right |
