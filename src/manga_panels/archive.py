@@ -34,6 +34,8 @@ def unpack(path: str | Path) -> list[Image.Image]:
         return _unpack_zip(path)
     if ext == ".cbr" or ext == ".rar":
         return _unpack_rar(path)
+    if ext == ".pdf":
+        return _unpack_pdf(path)
     if ext in _IMG_EXT:                       # a bare image -> single page
         try:
             data = path.read_bytes()
@@ -41,6 +43,68 @@ def unpack(path: str | Path) -> list[Image.Image]:
             raise BadArchive(f"cannot read {path.name}: {e}") from e
         return [_load(data)]
     raise ValueError(f"unsupported format: {path.suffix}")
+
+
+def _pdf_module():
+    try:
+        import pikepdf
+    except ImportError as e:
+        raise MissingDependency(
+            "PDF input needs the [pdf] extra: uv sync --extra pdf "
+            "(or pip install 'manga-panels[pdf]')"
+        ) from e
+    return pikepdf
+
+
+def _unpack_pdf(path: Path) -> list[Image.Image]:
+    """Pages of a scanned PDF: exactly one image per page, which is what a comic
+    PDF made from scans (ImageMagick, img2pdf, our own -f pdf) holds. The image is
+    taken out as stored — a JPEG is decoded straight from its own bytes, never
+    rendered, so there is no resampling and no second compression.
+
+    A page that is not a single image (vector art, text, a tiled scan) is refused
+    with its number rather than guessed at: rendering it would need a PDF
+    renderer this tool does not ship."""
+    pikepdf = _pdf_module()
+    imgs = []
+    try:
+        with pikepdf.open(path) as pdf:
+            for n, page in enumerate(pdf.pages, start=1):
+                # get_images() also sees images inside form XObjects; older
+                # pikepdf only has the (now deprecated) .images mapping
+                found = list((page.get_images() if hasattr(page, "get_images")
+                              else page.images).values())
+                if len(found) != 1:
+                    raise BadArchive(
+                        f"{path.name}: page {n} holds {len(found)} images — only "
+                        "scanned PDFs (one image per page) are supported")
+                img = pikepdf.PdfImage(found[0]).as_pil_image().convert("RGB")
+                rot = int(page.obj.get("/Rotate", 0)) % 360
+                if rot:                         # /Rotate is clockwise, PIL anticlockwise
+                    img = img.rotate(-rot, expand=True)
+                imgs.append(img)
+    except pikepdf.PasswordError as e:
+        raise BadArchive(f"encrypted pdf: {path.name}") from e
+    except (pikepdf.PdfError, pikepdf.UnsupportedImageTypeError, OSError) as e:
+        raise BadArchive(f"corrupt or unsupported pdf: {path.name}: {e}") from e
+    if not imgs:
+        raise EmptyArchive(f"no pages in {path.name}")
+    return imgs
+
+
+def _read_pdf_title(path) -> dict:
+    """The PDF's own /Title, standing in for ComicInfo (which a PDF does not
+    carry). /Author is left out: scan tools fill it with themselves
+    ("https://imagemagick.org"), never with the mangaka."""
+    try:
+        pikepdf = _pdf_module()
+        with pikepdf.open(path) as pdf:
+            # NUL out too: UTF-16 titles often carry a terminator, and a NUL in
+            # <dc:title> makes the whole EPUB package invalid XML
+            title = str(pdf.docinfo.get("/Title", "")).replace("\x00", "").strip()
+    except Exception:                       # metadata is a nicety, never a failure
+        return {}
+    return {"title": title, "chapters": []} if title else {}
 
 
 def _load(data: bytes) -> Image.Image:
@@ -69,7 +133,9 @@ def read_comicinfo(path: str | Path) -> dict:
     mid-volume, so any fixed offset silently misplaces every later chapter.
 
     Metadata is a nicety, never a reason to fail: an absent, unreadable or
-    malformed ComicInfo yields {}."""
+    malformed ComicInfo yields {}. A PDF yields its document title instead."""
+    if Path(path).suffix.lower() == ".pdf":
+        return _read_pdf_title(path)
     try:
         with zipfile.ZipFile(path) as z:
             name = next((n for n in z.namelist()

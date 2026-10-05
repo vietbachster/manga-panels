@@ -8,7 +8,7 @@ from rich.markup import escape
 
 from manga_panels.archive import _natkey
 
-_EXTS = {".cbz", ".cbr", ".zip", ".rar"}
+_EXTS = {".cbz", ".cbr", ".zip", ".rar", ".pdf"}
 
 
 def _visible(d: Path):

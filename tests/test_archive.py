@@ -820,3 +820,100 @@ def test_pdf_without_page_starts_has_no_outline(tmp_path):
     pack([Image.new("RGB", (20, 30))], out, fmt="pdf")
     with pikepdf.open(out) as pdf, pdf.open_outline() as ol:
         assert list(ol.root) == []
+
+
+# --- PDF input ---------------------------------------------------------------
+
+def _make_pdf(path: Path, sizes_and_greys) -> None:
+    """A scanned-style PDF: one image per page, written by our own -f pdf."""
+    pack([Image.new("RGB", wh, (g, g, g)) for wh, g in sizes_and_greys], path, fmt="pdf")
+
+
+def test_unpack_pdf_reads_one_image_per_page_in_order(tmp_path):
+    import pytest
+    pytest.importorskip("pikepdf")
+    src = tmp_path / "vol.pdf"
+    _make_pdf(src, [((20, 30), 10), ((40, 50), 120), ((30, 20), 240)])
+    pages = unpack(src)
+    assert [p.size for p in pages] == [(20, 30), (40, 50), (30, 20)]   # native pixels
+    assert all(p.mode == "RGB" for p in pages)
+    greys = [p.getpixel((5, 5))[0] for p in pages]
+    assert greys == sorted(greys) and greys[0] < 60 < greys[1] < 200 < greys[2]
+
+
+def test_unpack_pdf_honours_page_rotate(tmp_path):
+    import pytest
+    pikepdf = pytest.importorskip("pikepdf")
+    src = tmp_path / "rot.pdf"
+    _make_pdf(src, [((20, 30), 0)])
+    with pikepdf.open(src, allow_overwriting_input=True) as pdf:
+        pdf.pages[0].obj["/Rotate"] = 90
+        pdf.save(src)
+    assert unpack(src)[0].size == (30, 20)          # turned the way a viewer shows it
+
+
+def test_unpack_pdf_page_without_one_image_is_refused_by_number(tmp_path):
+    import pytest
+    pikepdf = pytest.importorskip("pikepdf")
+    from manga_panels.errors import BadArchive
+    src = tmp_path / "mixed.pdf"
+    _make_pdf(src, [((20, 30), 0)])
+    with pikepdf.open(src, allow_overwriting_input=True) as pdf:
+        pdf.add_blank_page()                        # a page with no image at all
+        pdf.save(src)
+    with pytest.raises(BadArchive, match="page 2 holds 0 images"):
+        unpack(src)
+
+
+def test_unpack_corrupt_pdf_raises(tmp_path):
+    import pytest
+    pytest.importorskip("pikepdf")
+    from manga_panels.errors import BadArchive
+    src = tmp_path / "bad.pdf"
+    src.write_bytes(b"not a pdf")
+    with pytest.raises(BadArchive):
+        unpack(src)
+
+
+def test_unpack_pdf_missing_dep_raises(tmp_path, monkeypatch):
+    import sys, pytest
+    from manga_panels.errors import MissingDependency
+    monkeypatch.setitem(sys.modules, "pikepdf", None)    # import pikepdf -> ImportError
+    with pytest.raises(MissingDependency, match="pdf"):
+        unpack(tmp_path / "x.pdf")
+
+
+def test_read_comicinfo_takes_a_pdf_title_but_not_its_author(tmp_path):
+    import pytest
+    pikepdf = pytest.importorskip("pikepdf")
+    from manga_panels.archive import read_comicinfo
+    src = tmp_path / "vol.pdf"
+    _make_pdf(src, [((20, 30), 0)])
+    with pikepdf.open(src, allow_overwriting_input=True) as pdf:
+        pdf.docinfo["/Title"] = "Demon Slayer v01 "
+        pdf.docinfo["/Author"] = "https://imagemagick.org"
+        pdf.save(src)
+    assert read_comicinfo(src) == {"title": "Demon Slayer v01", "chapters": []}
+
+
+def test_read_comicinfo_pdf_title_drops_a_utf16_nul_terminator(tmp_path):
+    # seen on real ImageMagick PDFs: the title ends in U+0000, which would land
+    # in <dc:title> and make the EPUB's package document invalid XML
+    import pytest
+    pikepdf = pytest.importorskip("pikepdf")
+    from manga_panels.archive import read_comicinfo
+    src = tmp_path / "vol.pdf"
+    _make_pdf(src, [((20, 30), 0)])
+    with pikepdf.open(src, allow_overwriting_input=True) as pdf:
+        pdf.docinfo["/Title"] = pikepdf.String("Demon Slayer v01 \x00")
+        pdf.save(src)
+    assert read_comicinfo(src)["title"] == "Demon Slayer v01"
+
+
+def test_read_comicinfo_pdf_without_title_is_empty(tmp_path):
+    import pytest
+    pytest.importorskip("pikepdf")
+    from manga_panels.archive import read_comicinfo
+    src = tmp_path / "vol.pdf"
+    _make_pdf(src, [((20, 30), 0)])
+    assert read_comicinfo(src) == {}

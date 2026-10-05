@@ -27,9 +27,9 @@ quality = 90            # jpeg quality, 1..95 (jpeg only)
 # max_width = 1264
 
 # Device profile: NOT just the width. On big readers the preset carries only
-# max_width; on the Xteink X4 it also carries format/upscale/pad_aspect/page,
+# max_width; on the Xteink X4 and X3 it also carries format/upscale/pad_aspect/page,
 # which that hardware demands (it opens neither cbz nor pdf, never scales up and
-# centres horizontally only).
+# centres horizontally only; the X3 profile targets the microreader firmware).
 # device = "x4"
 
 # e-ink: grayscale (smaller, native to e-paper) and gamma to darken the midtones

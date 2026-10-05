@@ -18,7 +18,7 @@ from manga_panels.debug import debug_archive
 from manga_panels.pipeline import LABELS, process_archive
 from manga_panels.preview import preview_archive
 
-_EXTS = {".cbz", ".cbr", ".zip", ".rar"}
+_EXTS = {".cbz", ".cbr", ".zip", ".rar", ".pdf"}
 # --device profiles: name -> argparse dests. A profile carries what the HARDWARE
 # demands, so someone who owns the reader gets a working file without fiddling.
 # Personal taste (format on a big screen, quality, gamma) belongs in the user's
@@ -31,6 +31,16 @@ _DEVICES = {
     # through type=, so it arrives parsed.
     "x4": {"format": "epub", "max_width": 480, "upscale": True, "grayscale": True,
            "quality": 75, "rotate_wide": 1.0, "pad_aspect": "3:5", "page": "off"},
+    # Xteink X3 (3.68", 792x528, ESP32-C3) running microreader: epub only, and it
+    # draws book images 1-bit dithered, so colour is wasted bytes. An image at
+    # least half the screen wide is stretched to the full 528px, then clamped to
+    # the text area's height — 792 minus the reader's default top/bottom margins
+    # and progress bar (12 + 8 + 12) = 760 — and it sits at the top, never
+    # centred vertically. Padding to 528:760 makes every panel fill that box
+    # exactly. Width matched to the screen, because the reader decodes each JPEG
+    # on the ESP32 at every page turn.
+    "x3": {"format": "epub", "max_width": 528, "upscale": True, "grayscale": True,
+           "quality": 75, "rotate_wide": 1.0, "pad_aspect": "528:760", "page": "off"},
     # The rest: width only.
     "basic": {"max_width": 1072},       # Kindle basic / Kobo Clara / Boox Poke (6")
     "pw11": {"max_width": 1236},        # Kindle Paperwhite 11th gen (6.8")
@@ -89,7 +99,7 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
         formatter_class=RichHelpFormatter,
     )
     ap.add_argument("input", nargs="?",
-                    help="a .cbz/.cbr/image file or folder (omit to pick from the library)")
+                    help="a .cbz/.cbr/.pdf/image file or folder (omit to pick from the library)")
     ap.add_argument("-o", "--output", help="output file or folder")
     ap.add_argument("--config", help="TOML defaults (default: ./manga-panels.toml)")
     ap.add_argument("-L", "--library",
@@ -108,7 +118,7 @@ def _build_parser(devices: list[str] | None = None) -> argparse.ArgumentParser:
                        help="shrink images wider than N px (default: no limit)")
     g_out.add_argument("--device", choices=devices or sorted(_DEVICES),
                        help="device profile: screen width, plus format and layout "
-                            "where the hardware demands it (e.g. x4, paperwhite)")
+                            "where the hardware demands it (e.g. x3, x4, paperwhite)")
     g_out.add_argument("--grayscale", action="store_true",
                        help="convert panels to grayscale (smaller, native to e-ink)")
     g_out.add_argument("--gamma", type=float, default=1.0,
@@ -202,7 +212,7 @@ def _jobs(src: Path, output: str | None, suffix: str):
     if src.is_dir():
         files = sorted(p for p in src.iterdir() if p.suffix.lower() in _EXTS)
         if not files:
-            return [], f"no .cbz/.cbr files in {src}"
+            return [], f"no .cbz/.cbr/.pdf files in {src}"
         out_dir = Path(output) if output else src.with_name(src.name + "_panels")
         return _pair(files, out_dir, suffix), None
     if not src.exists():
@@ -375,6 +385,13 @@ def main(argv: list[str] | None = None) -> int:
             import img2pdf  # noqa: F401
         except ImportError:
             console.print("[red]error:[/] PDF output needs the [pdf] extra: "
+                          "uv sync --extra pdf")
+            return 1
+    if any(inp.suffix.lower() == ".pdf" for inp, _ in jobs):   # same, for PDF input
+        try:
+            import pikepdf  # noqa: F401
+        except ImportError:
+            console.print("[red]error:[/] PDF input needs the [pdf] extra: "
                           "uv sync --extra pdf")
             return 1
 

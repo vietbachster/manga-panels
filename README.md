@@ -2,7 +2,7 @@
 
 **English** · [Português](README.pt-BR.md)
 
-Cut manga pages (CBZ/CBR) into **panels** and repack them as a new CBZ — one
+Cut manga pages (CBZ/CBR/PDF) into **panels** and repack them as a new CBZ — one
 panel per page — so a small screen is comfortable to read on.
 
 <p align="center">
@@ -32,6 +32,7 @@ It picks the best torch device on its own: **CUDA** (NVIDIA), **ROCm** (AMD),
 - [Screen widths](#screen-widths)
 - [Kindle](#kindle)
 - [Xteink X4 (EPUB-only readers)](#xteink-x4-epub-only-readers)
+- [Xteink X3 (microreader)](#xteink-x3-microreader)
 - [Chapters](#chapters)
 - [Development](#development)
 - [License](#license)
@@ -59,6 +60,7 @@ something.
 >
 > CBR (`.cbr`) needs the **`unrar`** binary on the system plus the extra:
 > `uv sync --extra cbr`.
+> PDF input (and output) needs `uv sync --extra pdf`.
 
 Prefer a bare `manga-panels` command from any folder (no `uv run` prefix)?
 Install it as a uv tool:
@@ -77,6 +79,7 @@ manga-panels chapter.cbz                # one file  -> chapter_panels.cbz
 manga-panels chapter.cbz -o out.cbz     # a specific output name
 manga-panels ./chapters -o ./out        # a whole folder (batch)
 manga-panels page.png                   # a single loose image works too (1 page)
+manga-panels volume01.pdf               # a scanned PDF (one image per page)
 manga-panels                            # no input -> pick from your library menu
 ```
 
@@ -198,7 +201,7 @@ short form: `-o` output, `-L` library, `-f` format, `-q` quality, `-w` max-width
 | `--devices` | list every device profile (built-in and from your config) with what it sets, and exit |
 | `--preview` | `<stem>_preview.cbz` with panels drawn/numbered (check the cuts) |
 | `--debug` | `<stem>_debug.cbz` with everything Magi sees (characters, bubbles, speakers) |
-| `--device x4` | device profile: screen width **plus format and layout** where the hardware demands it (`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
+| `--device x4` | device profile: screen width **plus format and layout** where the hardware demands it (`x3`/`x4`/`basic`/`pw11`/`paperwhite`/`sage`/`tablet`/`scribe`/`phone`) |
 | `-w`, `--max-width 1264` | shrink anything wider than N px (keeps the ratio, never grows) |
 | `--grayscale` | grayscale — smaller and native to e-ink |
 | `--gamma 1.8` | darken midtones for e-ink (more contrast; `1.0` = off) |
@@ -252,7 +255,7 @@ readers open comic archives with. Verified in the source, not in the docs.
 | title/author | filename only | embedded in the docinfo |
 | dependency | none | `uv sync --extra pdf` |
 | if something breaks | it's a zip: open it, look, extract | opaque, needs tooling |
-| reprocessing later | `manga-panels` reads it back | no — `unpack()` doesn't open PDF |
+| reprocessing later | `manga-panels` reads it back | yes — the JPEGs come back out as stored |
 
 **The whole decision is one question: do you navigate by chapter?** If your
 volumes carry `ComicInfo.xml` bookmarks, PDF is worth it — the outline is the
@@ -319,6 +322,7 @@ Without it, the source resolution is kept. Use your device's **screen width**:
 
 | device | screen (px) | `--max-width` |
 |---|---|---|
+| Xteink X3 (3.68", 258 ppi) | 792×528 | `528` |
 | Xteink X4 (4.3", 220 ppi) | 800×480 | `480` |
 | Kindle basic / Kobo Clara / Boox Poke (6", 300 ppi) | 1072×1448 | `1072` |
 | Kindle Paperwhite 11th (6.8") | 1236×1648 | `1236` |
@@ -439,6 +443,37 @@ get resampled up to full screen width, which fattens the JPEG. On a real volume
 If the transfer time hurts more than it's worth, the lever is lowering `-q`
 further; dropping `--upscale` is not an option, because it returns `--pad-aspect`
 to the near-no-op measured above.
+
+## Xteink X3 (microreader)
+
+The X3 (3.68", 792×528) running [microreader](https://github.com/CidVonHighwind/microreader)
+reads **EPUB only**, like the X4. Three things in that firmware shape the profile,
+all read out of its source:
+
+- **Book images are drawn 1-bit, Atkinson-dithered** — no grey levels; those are
+  for anti-aliased text only. Colour and fine greys are wasted bytes, hence
+  `--grayscale`.
+- **An image at least half the screen wide is stretched to the full 528 px**, up
+  or down, then clamped to the text area's height: 792 minus the default top and
+  bottom margins and the progress bar, **760 px**. It sits at the top of the page,
+  never centred vertically. `--pad-aspect 528:760` with `--upscale` makes every
+  panel fill that box exactly, so none is left small or stranded at the top.
+- **Every JPEG is decoded on the ESP32 at each page turn.** A panel sent at the
+  screen's own width decodes much faster than a 1240 px scan.
+
+```bash
+manga-panels vol01.pdf --device x3
+```
+
+which is:
+
+```bash
+manga-panels vol01.pdf --format epub --max-width 528 --upscale --grayscale -q 75 \
+    --rotate-wide 1.0 --pad-aspect 528:760 --page off
+```
+
+If you read with the **Normal** margin instead of the default **Wide**, the box is
+776 px tall; the 760 px panels still fit, with 16 px to spare at the foot.
 
 ## Chapters
 

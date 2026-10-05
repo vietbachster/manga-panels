@@ -1232,3 +1232,64 @@ def test_duplicate_chapter_marks_at_same_index_keep_first_with_a_warning(tmp_pat
     process_archive(src, tmp_path / "out.cbz", page_pos="off", warn=said.append)
     assert captured["chapters"] == [(0, "First")]        # first kept, second dropped
     assert len(said) == 1 and "First" in said[0] and "Second" in said[0]
+
+
+def test_cli_device_x3_is_a_full_profile(tmp_path, monkeypatch):
+    from manga_panels.cli import main
+    captured = _capture(monkeypatch)
+    assert main([_src(tmp_path), "--device", "x3"]) == 0
+    assert captured["fmt"] == "epub"
+    assert captured["max_width"] == 528
+    assert captured["upscale"] is True
+    assert captured["grayscale"] is True
+    assert captured["rotate_wide"] == 1.0
+    assert captured["page_pos"] == "off"
+    assert captured["pad_aspect"] == 528 / 760
+    assert (tmp_path / "ch_panels.epub").exists()
+
+
+def test_x3_panels_fill_the_readers_image_box(tmp_path):
+    # every panel, whatever its shape, must come out as the box microreader gives
+    # an image on the X3: the full 528 wide, ~760 tall. Height only to within 1%,
+    # because padding a tiny panel and scaling it up rounds twice (60px -> 757).
+    import io, pytest
+    pytest.importorskip("pikepdf")
+    from manga_panels.cli import main
+    src = tmp_path / "vol.pdf"
+    pack([_grid_page()], src, fmt="pdf")
+    assert main([str(src), "--device", "x3"]) == 0
+    with zipfile.ZipFile(tmp_path / "vol_panels.epub") as z:
+        imgs = [Image.open(io.BytesIO(z.read(n)))
+                for n in sorted(z.namelist()) if n.endswith(".jpg")]
+    assert len(imgs) == 4                               # page off -> panels only
+    assert {im.width for im in imgs} == {528}
+    assert all(abs(im.height - 760) <= 760 * 0.01 for im in imgs)
+    assert {im.mode for im in imgs} == {"L"}
+
+
+def test_cli_processes_a_pdf_source_and_takes_its_title(tmp_path):
+    import pytest
+    pikepdf = pytest.importorskip("pikepdf")
+    from manga_panels.cli import main
+    src = tmp_path / "vol.pdf"
+    pack([_grid_page()], src, fmt="pdf")
+    with pikepdf.open(src, allow_overwriting_input=True) as pdf:
+        pdf.docinfo["/Title"] = "Demon Slayer v01"
+        pdf.save(src)
+    assert main([str(src), "-f", "epub"]) == 0
+    with zipfile.ZipFile(tmp_path / "vol_panels.epub") as z:
+        opf = z.read("OEBPS/content.opf").decode()
+        n = sum(1 for name in z.namelist() if name.endswith(".jpg"))
+    assert "<dc:title>Demon Slayer v01</dc:title>" in opf
+    assert n == 5                                       # macro page + 4 panels
+
+
+def test_cli_folder_batch_picks_up_pdfs(tmp_path):
+    import pytest
+    pytest.importorskip("pikepdf")
+    from manga_panels.cli import main
+    d = tmp_path / "vols"
+    d.mkdir()
+    pack([_grid_page()], d / "v01.pdf", fmt="pdf")
+    assert main([str(d), "-o", str(tmp_path / "out")]) == 0
+    assert (tmp_path / "out" / "v01_panels.cbz").exists()
